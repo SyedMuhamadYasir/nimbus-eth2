@@ -435,3 +435,54 @@ func getBlock*(
 
 func len*(buffer: BlocksRootBuffer): int =
   len(buffer.roots)
+
+iterator popBlocks*(
+    buffer: var BlocksRootBuffer,
+    root: Eth2Digest
+): ref ForkedSignedBeaconBlock =
+  # Pop blocks from buffer, whose parent is the block identified by `root`
+  var toRemove: seq[Eth2Digest]
+  defer: # Run even if iterator is not carried to termination
+    for k in toRemove:
+      buffer.roots.del k
+
+  for k, v in buffer.roots.mpairs():
+    if v[].parent_root == root:
+      toRemove.add(k)
+      yield v
+
+func len*(buffer: BlocksRangeBuffer): int =
+  len(buffer.blocks)
+
+func almostFull*(buffer: BlocksRangeBuffer): bool =
+  # len(buffer.blocks) >= 2/3 * maxBufferSize
+  len(buffer.blocks) >= 2 * (buffer.maxBufferSize div 3)
+
+func reset*(buffer: var BlocksRangeBuffer) =
+  buffer.resetBuffer(0)
+
+func init*(
+    t: typedesc[BlocksRangeBuffer],
+    kind: SyncQueueKind,
+): BlocksRangeBuffer =
+  BlocksRangeBuffer(
+    direction: kind,
+  )
+
+func init*(
+    t: typedesc[BlocksRangeBuffer],
+    kind: SyncQueueKind,
+    maxBufferSize: int,
+): BlocksRangeBuffer =
+  doAssert(maxBufferSize > 0, "Buffer size could not be negative or zero")
+  BlocksRangeBuffer(
+    direction: kind,
+    maxBufferSize: maxBufferSize,
+  )
+
+func new*(
+    t: typedesc[BlocksRangeBuffer],
+    kind: SyncQueueKind,
+    maxBufferSize: int
+): ref BlocksRangeBuffer =
+  newClone BlocksRangeBuffer.init(kind, maxBufferSize)
