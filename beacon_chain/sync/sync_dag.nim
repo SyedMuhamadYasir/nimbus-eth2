@@ -46,7 +46,6 @@ type
     roots*: Table[Eth2Digest, SyncDagEntryRef]
     slots*: Table[Slot, HashSet[Eth2Digest]]
     peers*: Table[B, PeerEntryRef[A]]
-    config*: RuntimeConfig
     lastSlot*: Slot
 
 const
@@ -113,6 +112,9 @@ func fullLog*(s: set[DagBlockSourceType]): string =
   if DagBlockSourceType.Sidecarless in s: res.add("sidecarless")
   if DagBlockSourceType.Envelopeless in s: res.add("envelopeless")
   "[" & res.join(",") & "]"
+
+proc hash*(entry: SyncDagEntryRef): Hash =
+  hash(cast[pointer](entry))
 
 proc hash*(entry: SyncDagEntryRef): Hash =
   hash(cast[pointer](entry))
@@ -417,6 +419,7 @@ proc prune*[A, B](
     if sdag.roots.pop(root, entry):
       entry.parent = nil
       entry = nil
+  rootsToDelete.clear()
 
 iterator ancestors*[A, B](
     sdag: SyncDag[A, B],
