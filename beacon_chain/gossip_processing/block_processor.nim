@@ -1094,6 +1094,9 @@ proc addPayload*(
       self.envelopeQuarantine[].addUnviable(signedBlock.root)
     of PayloadVerifierError.Duplicate:
       self.envelopeQuarantine[].remove(signedBlock.root)
+    of VerifierError.MissingSidecars:
+      # TODO (cheatfate)
+      debugGloasComment("todo")
 
   res.mapConvert(void)
 
