@@ -21,6 +21,9 @@ type
   DagBlockSourceType* {.pure.} = enum
     Orphan, Sidecarless, Envelopeless, Dag, Unviable
 
+  DagBlockSourceType* {.pure.} = enum
+    Orphan, Sidecarless, Dag, Unviable
+
   SyncDagEntryRef* = ref object
     blockId*: BlockId
     parent*: SyncDagEntryRef
