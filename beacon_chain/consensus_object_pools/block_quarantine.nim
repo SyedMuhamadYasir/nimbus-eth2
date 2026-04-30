@@ -159,6 +159,7 @@ proc addMissing*(quarantine: var Quarantine, root: Eth2Digest): Result[void, Unv
     # Add if it's not there, but don't update missing counter
     if not found:
       quarantine.missing.add(r)
+      quarantine.missingEvent.fire()
       break
 
   ok()
