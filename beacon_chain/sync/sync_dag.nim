@@ -14,6 +14,8 @@ import ../consensus_object_pools/blockchain_dag
 
 from std/sequtils import mapIt
 
+from std/sequtils import mapIt
+
 type
   DagEntryFlag* {.pure.} = enum
     Local, Unviable, Finalized, Pending, MissingSidecars, MissingEnvelope
@@ -118,6 +120,28 @@ func fullLog*(s: set[DagBlockSourceType]): string =
 
 proc hash*(entry: SyncDagEntryRef): Hash =
   hash(cast[pointer](entry))
+
+func shortLog*(s: SyncDagEntryRef): string =
+  if isNil(s):
+    return "not available"
+  shortLog(s.blockId)
+
+func fullLog*(s: set[DagEntryFlag]): string =
+  var res: seq[string]
+  if DagEntryFlag.Local in s: res.add("local")
+  if DagEntryFlag.Pending in s: res.add("pending")
+  if DagEntryFlag.Unviable in s: res.add("unviable")
+  if DagEntryFlag.Finalized in s: res.add("finalized")
+  if DagEntryFlag.MissingSidecars in s: res.add("missing_sidecars")
+  "[" & res.join(",") & "]"
+
+func fullLog*(s: set[DagBlockSourceType]): string =
+  var res: seq[string]
+  if DagBlockSourceType.Orphan in s: res.add("orphan")
+  if DagBlockSourceType.Unviable in s: res.add("unviable")
+  if DagBlockSourceType.Dag in s: res.add("dag")
+  if DagBlockSourceType.Sidecarless in s: res.add("sidecarless")
+  "[" & res.join(",") & "]"
 
 proc hash*(entry: SyncDagEntryRef): Hash =
   hash(cast[pointer](entry))
