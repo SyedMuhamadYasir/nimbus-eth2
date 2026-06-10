@@ -459,7 +459,7 @@ func len*(buffer: BlocksRangeBuffer): int =
 
 func almostFull*(buffer: BlocksRangeBuffer): bool =
   # len(buffer.blocks) >= 2/3 * maxBufferSize
-  len(buffer.blocks) >= 2 * (buffer.maxBufferSize div 3)
+  len(buffer.items) >= 2 * (buffer.maxBufferSize div 3)
 
 func reset*(buffer: var BlocksRangeBuffer) =
   buffer.resetBuffer(0)
