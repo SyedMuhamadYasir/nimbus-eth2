@@ -885,6 +885,7 @@ proc initFullNode(
   node.dag.eaSlot = eaSlot
   node.list = clist
   node.fuluColumnQuarantine = fuluColumnQuarantine
+  node.gloasColumnQuarantine = gloasColumnQuarantine
   node.quarantine = quarantine
   node.attestationPool = attestationPool
   node.syncCommitteeMsgPool = syncCommitteeMsgPool
@@ -905,7 +906,7 @@ proc initFullNode(
     SyncOverseerRef2.new(node.network, node.consensusManager, config,
                          getBeaconTime, node.beaconClock, blockProcessor,
                          validatorCustody, quarantine,
-                         dataColumnQuarantine, gloasColumnQuarantine,
+                         fuluColumnQuarantine, gloasColumnQuarantine,
                          node.eventBus.blockGossipPeerQueue,
                          node.eventBus.blocksQueue,
                          node.eventBus.finalQueue)
