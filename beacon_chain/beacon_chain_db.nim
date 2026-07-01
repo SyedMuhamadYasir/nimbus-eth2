@@ -1120,7 +1120,7 @@ proc getPhase0Block(
     result.get().root = key
 {.pop.}
 
-proc getBlock*[X: SomeForkySignedBeaconBlock](
+proc getBlock*[X: ForkyTrustedSignedBeaconBlock](
     db: BeaconChainDB, key: Eth2Digest, T: typedesc[X]): Opt[T] =
   # We only store blocks that we trust in the database
   const consensusFork = T.kind
