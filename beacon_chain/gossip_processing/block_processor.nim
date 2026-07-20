@@ -298,8 +298,6 @@ proc storeBackfillBlock(
       res
     of VerifierError.Duplicate:
       res
-    of VerifierError.MissingSidecars:
-      res
   else:
     when consensusFork == ConsensusFork.Fulu:
       # Only store side cars after successfully establishing block viability.
@@ -974,8 +972,6 @@ proc addBlock*(
       err(res.error())
     of VerifierError.Duplicate:
       err(res.error())
-    of VerifierError.MissingSidecars:
-      err(res.error())
 
 proc storeBackfillPayload(
     self: var BlockProcessor,
@@ -1094,9 +1090,6 @@ proc addPayload*(
       self.envelopeQuarantine[].addUnviable(signedBlock.root)
     of PayloadVerifierError.Duplicate:
       self.envelopeQuarantine[].remove(signedBlock.root)
-    of VerifierError.MissingSidecars:
-      # TODO (cheatfate)
-      debugGloasComment("todo")
 
   res.mapConvert(void)
 
