@@ -22,8 +22,8 @@ export base, phase0, altair, merge, chronos, chronicles, results,
 
 type
   SyncVerifierError* {.pure.} = enum
-    Invalid, MissingParent, UnviableFork, Duplicate, MissingSidecars,
-    MissingEnvelope
+    Invalid, InvalidSidecars, MissingParent, UnviableFork, Duplicate,
+    MissingSidecars, MissingEnvelope
   GetSlotCallback* = proc(): Slot {.gcsafe, raises: [].}
   GetBoolCallback* = proc(): bool {.gcsafe, raises: [].}
   ProcessingCallback* = proc() {.gcsafe, raises: [].}
@@ -102,6 +102,7 @@ type
     Empty,
     MissingSidecars,
     MissingEnvelope,
+    InvalidSidecars,
     NoRelevant,
     NoError
 
@@ -486,6 +487,8 @@ func init(t: typedesc[SyncProcessError],
     SyncProcessError.MissingSidecars
   of SyncVerifierError.MissingEnvelope:
     SyncProcessError.MissingEnvelope
+  of SyncVerifierError.InvalidSidecars:
+    SyncProcessError.InvalidSidecars
 
 func init(t: typedesc[SyncProcessError]): SyncProcessError =
   SyncProcessError.NoError
@@ -522,6 +525,19 @@ func toSyncVerifierError*(a: VerifierError): SyncVerifierError =
     SyncVerifierError.UnviableFork
   of VerifierError.Duplicate:
     SyncVerifierError.Duplicate
+
+func toSyncVerifierError*(a: PayloadVerifierError): SyncVerifierError =
+  case a
+  of PayloadVerifierError.Invalid:
+    SyncVerifierError.Invalid
+  of PayloadVerifierError.MissingParent:
+    SyncVerifierError.MissingParent
+  of PayloadVerifierError.UnviableFork:
+    SyncVerifierError.UnviableFork
+  of PayloadVerifierError.Duplicate:
+    SyncVerifierError.Duplicate
+  of PayloadVerifierError.InvalidSidecars:
+    SyncVerifierError.InvalidSidecars
 
 proc init*[T](
     t: typedesc[SyncRequest],
@@ -1233,6 +1249,8 @@ proc process[M, N](
         return SyncProcessingResult.init(res.error(), ritem.slot, ritem.root)
       of SyncVerifierError.MissingEnvelope:
         return SyncProcessingResult.init(res.error(), ritem.slot, ritem.root)
+      of SyncVerifierError.InvalidSidecars:
+        return SyncProcessingResult.init(res.error(), ritem.slot, ritem.root)
       of SyncVerifierError.UnviableFork:
         # Keep going so as to register other unviable blocks with the
         # quarantine
@@ -1255,11 +1273,11 @@ func isError(e: SyncProcessError): bool =
   case e
   of SyncProcessError.Empty, SyncProcessError.NoError,
      SyncProcessError.Duplicate, SyncProcessError.GoodAndMissingParent,
-     SyncProcessError.NoRelevant, SyncProcessError.MissingSidecars,
-     SyncProcessError.MissingEnvelope:
+     SyncProcessError.NoRelevant, SyncProcessError.MissingSidecars:
     false
   of SyncProcessError.Invalid, SyncProcessError.UnviableFork,
-     SyncProcessError.MissingParent:
+     SyncProcessError.MissingParent, SyncProcessError.MissingEnvelope,
+     SyncProcessError.InvalidSidecars:
     true
 
 proc getMissingMap*[M](
@@ -1433,6 +1451,22 @@ proc push*[M, N](
 
     of SyncProcessError.MissingSidecars:
       debug "Received blocks without sidecars",
+            request = sr,
+            queue = shortLog(sq),
+            completeness = shortLog(sq.requests[position.qindex].completeness),
+            voids_count = sq.requests[position.qindex].voidsCount,
+            failures_count = sq.requests[position.qindex].failuresCount,
+            blocks_count = len(data),
+            blocks_map = getShortMap(sr, data),
+            sync_ident = sq.ident,
+            topics = "sync"
+
+      fillCompleteness(false, pres.blck, true)
+      sq.del(position)
+      res = 0'i64
+
+    of SyncProcessError.InvalidSidecars:
+      debug "Received sidecars does not pass verification",
             request = sr,
             queue = shortLog(sq),
             completeness = shortLog(sq.requests[position.qindex].completeness),

@@ -70,7 +70,7 @@ func testforkAtEpoch(epoch: Epoch): ConsensusFork =
 type
   BlockEntry = object
     ritem*: SyncResponseItem
-    resfut*: Future[Result[void, VerifierError]]
+    resfut*: Future[Result[void, SyncVerifierError]]
 
   FuluColumnData = object
     block_root*: Eth2Digest
@@ -332,10 +332,10 @@ func collector(queue: AsyncQueue[BlockEntry]): BlockVerifier =
   proc verify(
       ritem: SyncResponseItem,
       maybeFinalized: bool
-  ): Future[Result[void, VerifierError]] {.
+  ): Future[Result[void, SyncVerifierError]] {.
     async: (raises: [CancelledError], raw: true).} =
     let fut =
-      Future[Result[void, VerifierError]].Raising([CancelledError]).init()
+      Future[Result[void, SyncVerifierError]].Raising([CancelledError]).init()
     try:
       queue.addLastNoWait(BlockEntry(ritem: ritem, resfut: fut))
     except CatchableError as exc:
@@ -348,7 +348,7 @@ func compareRange(a: SyncRange, b: Slice[Slot]): bool =
 
 proc setupVerifier(
   skind: SyncQueueKind,
-  sc: openArray[tuple[slots: Slice[Slot], code: Opt[VerifierError]]]
+  sc: openArray[tuple[slots: Slice[Slot], code: Opt[SyncVerifierError]]]
 ): tuple[collector: BlockVerifier, verifier: Future[void]] =
   doAssert(len(sc) > 0, "Empty scenarios are not allowed")
 
@@ -357,9 +357,9 @@ proc setupVerifier(
     aq = newAsyncQueue[BlockEntry]()
 
   template done(b: BlockEntry) =
-    b.resfut.complete(Result[void, VerifierError].ok())
+    b.resfut.complete(Result[void, SyncVerifierError].ok())
   template fail(b: BlockEntry, e: untyped) =
-    b.resfut.complete(Result[void, VerifierError].err(e))
+    b.resfut.complete(Result[void, SyncVerifierError].err(e))
   template verifyBlock(i, e, s, v: untyped): untyped =
     let item = await queue.popFirst()
     if item.ritem.slot == s:
@@ -394,7 +394,7 @@ proc setupVerifier(
 proc setupColumnsVerifier(
   skind: SyncQueueKind,
   scenarioMap: ColumnMap,
-  sc: openArray[tuple[slots: Slice[Slot], code: Opt[VerifierError]]]
+  sc: openArray[tuple[slots: Slice[Slot], code: Opt[SyncVerifierError]]]
 ): tuple[quarantine: ColQuarantine, collector: BlockVerifier,
          verifier: Future[void]] =
   var
@@ -403,9 +403,9 @@ proc setupColumnsVerifier(
     aq = newAsyncQueue[BlockEntry]()
 
   template done(b: BlockEntry) =
-    b.resfut.complete(Result[void, VerifierError].ok())
+    b.resfut.complete(Result[void, SyncVerifierError].ok())
   template fail(b: BlockEntry, e: untyped) =
-    b.resfut.complete(Result[void, VerifierError].err(e))
+    b.resfut.complete(Result[void, SyncVerifierError].err(e))
   template verifyBlock(i, e, s, v: untyped): untyped =
     let item = await queue.popFirst()
     if item.ritem.slot == s:
@@ -416,7 +416,7 @@ proc setupColumnsVerifier(
         if (bmap and scenarioMap) == scenarioMap:
           item.done()
         else:
-          item.fail(VerifierError.MissingSidecars)
+          item.fail(SyncVerifierError.MissingSidecars)
     else:
       raiseAssert "Verifier got block from incorrect slot, " &
                   "expected " & $s & ", got " &
@@ -428,10 +428,10 @@ proc setupColumnsVerifier(
     proc verify(
         ritem: SyncResponseItem,
         maybeFinalized: bool
-    ): Future[Result[void, VerifierError]] {.
+    ): Future[Result[void, SyncVerifierError]] {.
       async: (raises: [CancelledError], raw: true).} =
       let fut =
-        Future[Result[void, VerifierError]].Raising([CancelledError]).init()
+        Future[Result[void, SyncVerifierError]].Raising([CancelledError]).init()
       try:
         queue.addLastNoWait(BlockEntry(ritem: ritem, resfut: fut))
       except CatchableError as exc:
@@ -463,7 +463,7 @@ suite "SyncManager test suite":
       # Four ranges was distributed to single peer only.
       let
         scenario = [
-          (Slot(0) .. Slot(127), Opt.none(VerifierError))
+          (Slot(0) .. Slot(127), Opt.none(SyncVerifierError))
         ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -549,7 +549,7 @@ suite "SyncManager test suite":
       # be pushed by all peers.
       let
         scenario = [
-          (Slot(0) .. Slot(127), Opt.none(VerifierError))
+          (Slot(0) .. Slot(127), Opt.none(SyncVerifierError))
         ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -675,13 +675,13 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError))
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError))
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -767,27 +767,27 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(40), Opt.none(VerifierError)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.Invalid)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.Invalid)),
-              (Slot(0) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.none(VerifierError)),
-              (Slot(42) .. Slot(63), Opt.none(VerifierError))
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(40), Opt.none(SyncVerifierError)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.Invalid)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.Invalid)),
+              (Slot(0) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.none(SyncVerifierError)),
+              (Slot(42) .. Slot(63), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(22) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.Invalid)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.Invalid)),
-              (Slot(32) .. Slot(63), Opt.some(VerifierError.Duplicate)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(20), Opt.none(VerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(22) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.Invalid)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.Invalid)),
+              (Slot(32) .. Slot(63), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(20), Opt.none(SyncVerifierError)),
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -928,25 +928,25 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(40), Opt.none(VerifierError)),
-              (Slot(41) .. Slot(63), Opt.some(VerifierError.UnviableFork)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(63), Opt.some(VerifierError.UnviableFork)),
-              (Slot(0) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(63), Opt.none(VerifierError))
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(40), Opt.none(SyncVerifierError)),
+              (Slot(41) .. Slot(63), Opt.some(SyncVerifierError.UnviableFork)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(63), Opt.some(SyncVerifierError.UnviableFork)),
+              (Slot(0) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(63), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(22) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(21), Opt.some(VerifierError.UnviableFork)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(0) .. Slot(21), Opt.some(VerifierError.UnviableFork)),
-              (Slot(32) .. Slot(63), Opt.some(VerifierError.Duplicate)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(0) .. Slot(21), Opt.none(VerifierError))
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(22) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(21), Opt.some(SyncVerifierError.UnviableFork)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(0) .. Slot(21), Opt.some(SyncVerifierError.UnviableFork)),
+              (Slot(32) .. Slot(63), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(0) .. Slot(21), Opt.none(SyncVerifierError))
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1081,51 +1081,51 @@ suite "SyncManager test suite":
           [
             (
               Slot(0), Slot(127),
-              (Slot(0) .. Slot(127), Opt.none(VerifierError)), 4, false, 32
+              (Slot(0) .. Slot(127), Opt.none(SyncVerifierError)), 4, false, 32
             ),
             (
               Slot(0), Slot(127),
-              (Slot(0) .. Slot(127), Opt.none(VerifierError)), 5, true, 32
+              (Slot(0) .. Slot(127), Opt.none(SyncVerifierError)), 5, true, 32
             ),
             (
               Slot(0), Slot(120),
-              (Slot(0) .. Slot(120), Opt.none(VerifierError)), 4, false, 25
+              (Slot(0) .. Slot(120), Opt.none(SyncVerifierError)), 4, false, 25
             ),
             (
               Slot(0), Slot(120),
-              (Slot(0) .. Slot(120), Opt.none(VerifierError)), 5, true, 25
+              (Slot(0) .. Slot(120), Opt.none(SyncVerifierError)), 5, true, 25
             ),
             (
               Slot(32), Slot(159),
-              (Slot(32) .. Slot(159), Opt.none(VerifierError)), 4, false, 32
+              (Slot(32) .. Slot(159), Opt.none(SyncVerifierError)), 4, false, 32
             ),
             (
               Slot(32), Slot(159),
-              (Slot(32) .. Slot(159), Opt.none(VerifierError)), 5, true, 32
+              (Slot(32) .. Slot(159), Opt.none(SyncVerifierError)), 5, true, 32
             ),
             (
               Slot(32), Slot(150),
-              (Slot(32) .. Slot(150), Opt.none(VerifierError)), 4, false, 23
+              (Slot(32) .. Slot(150), Opt.none(SyncVerifierError)), 4, false, 23
             ),
             (
               Slot(32), Slot(150),
-              (Slot(32) .. Slot(150), Opt.none(VerifierError)), 5, true, 23
+              (Slot(32) .. Slot(150), Opt.none(SyncVerifierError)), 5, true, 23
             ),
             (
               Slot(13), Slot(120),
-              (Slot(13) .. Slot(120), Opt.none(VerifierError)), 4, false, 12
+              (Slot(13) .. Slot(120), Opt.none(SyncVerifierError)), 4, false, 12
             ),
             (
               Slot(13), Slot(120),
-              (Slot(13) .. Slot(120), Opt.none(VerifierError)), 5, true, 12
+              (Slot(13) .. Slot(120), Opt.none(SyncVerifierError)), 5, true, 12
             ),
             (
               Slot(43), Slot(150),
-              (Slot(43) .. Slot(150), Opt.none(VerifierError)), 4, false, 12
+              (Slot(43) .. Slot(150), Opt.none(SyncVerifierError)), 4, false, 12
             ),
             (
               Slot(43), Slot(150),
-              (Slot(43) .. Slot(150), Opt.none(VerifierError)), 5, true, 12
+              (Slot(43) .. Slot(150), Opt.none(SyncVerifierError)), 5, true, 12
             )
           ]
 
@@ -1218,13 +1218,13 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError))
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1360,19 +1360,19 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(128) .. Slot(159), Opt.none(VerifierError))
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(128) .. Slot(159), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(128) .. Slot(159), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError))
+              (Slot(128) .. Slot(159), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1451,39 +1451,39 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             [
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(40), Opt.none(VerifierError)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(VerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(VerifierError.Duplicate)),
-              (Slot(41) .. Slot(63), Opt.none(VerifierError))
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(40), Opt.none(SyncVerifierError)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(41) .. Slot(63), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             [
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(22) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(VerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-              (Slot(0) .. Slot(21), Opt.none(VerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(22) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
+              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+              (Slot(0) .. Slot(21), Opt.none(SyncVerifierError)),
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1597,7 +1597,7 @@ suite "SyncManager test suite":
     asyncTest "[SyncQueue#" & $kind & "] block completeness test":
       let
         scenario = [
-          (Slot(0) .. Slot(127), Opt.none(VerifierError))
+          (Slot(0) .. Slot(127), Opt.none(SyncVerifierError))
         ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1715,31 +1715,31 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             @[
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(32), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(33), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError))
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(32), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(33), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             @[
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(95) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(94) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError))
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(95) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(94) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
             ]
         localMap = ColumnMap.init([4, 13, 18, 23])
         verifier = setupColumnsVerifier(kind, localMap, scenario)
@@ -1946,41 +1946,41 @@ suite "SyncManager test suite":
           case kind
           of SyncQueueKind.Forward:
             @[
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(0), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(32), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(32), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(32), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(64), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(64), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(64), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(96), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(96), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(96), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError))
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(0), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(32), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(32), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(32), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(64), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(64), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(64), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(96), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(96), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(96), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
             @[
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(127) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(96) .. Slot(127), Opt.none(VerifierError)),
-              (Slot(95) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(95) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(95) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-              (Slot(63) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(63) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(63) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-              (Slot(31) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(31) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(31) .. Slot(31), Opt.none(VerifierError)),
-              (Slot(0) .. Slot(31), Opt.none(VerifierError))
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(127) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
+              (Slot(95) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(95) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(95) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+              (Slot(63) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(63) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(63) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+              (Slot(31) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(31) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(31) .. Slot(31), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
             ]
         localMap = ColumnMap.init([4, 13, 38, 56])
         verifier = setupColumnsVerifier(kind, localMap, scenario)
@@ -2325,21 +2325,21 @@ suite "SyncManager test suite":
           (
             (Slot(0), Slot(64), Slot(0)),
             (Slot(64), Slot(0), Slot(64)),
-            [(Slot(0) .. Slot(64), Opt.none(VerifierError))],
+            [(Slot(0) .. Slot(64), Opt.none(SyncVerifierError))],
             @[Slot(0) .. Slot(31), Slot(32) .. Slot(63), Slot(64) .. Slot(64)],
             @[Slot(33) .. Slot(64), Slot(1) .. Slot(32), Slot(0) .. Slot(0)]
           ),
           (
             (Slot(64), Slot(128), Slot(64)),
             (Slot(128), Slot(64), Slot(128)),
-            [(Slot(64) .. Slot(128), Opt.none(VerifierError))],
+            [(Slot(64) .. Slot(128), Opt.none(SyncVerifierError))],
             @[Slot(64) .. Slot(95), Slot(96) .. Slot(127), Slot(128) .. Slot(128)],
             @[Slot(97) .. Slot(128), Slot(65) .. Slot(96), Slot(64) .. Slot(64)]
           ),
           (
             (Slot(57), Slot(129), Slot(57)),
             (Slot(129), Slot(61), Slot(129)),
-            [(Slot(57) .. Slot(64), Opt.none(VerifierError))],
+            [(Slot(57) .. Slot(64), Opt.none(SyncVerifierError))],
             @[Slot(57) .. Slot(88), Slot(89) .. Slot(120), Slot(121) .. Slot(129)],
             @[Slot(98) .. Slot(129), Slot(66) .. Slot(97), Slot(61) .. Slot(65)]
           )
@@ -2392,22 +2392,22 @@ suite "SyncManager test suite":
     let
       scenario =
         [
-          (Slot(0) .. Slot(31), Opt.none(VerifierError)),
+          (Slot(0) .. Slot(31), Opt.none(SyncVerifierError)),
           # .. 3 ranges are empty
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
           # 1st rewind should be to (failed_slot - 1 * epoch) = 96
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
           # 2nd rewind should be to (failed_slot - 2 * epoch) = 64
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(128), Opt.some(VerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(128), Opt.some(SyncVerifierError.MissingParent)),
           # 3rd rewind should be to (failed_slot - 4 * epoch) = 0
-          (Slot(0) .. Slot(31), Opt.some(VerifierError.Duplicate)),
-          (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-          (Slot(64) .. Slot(95), Opt.none(VerifierError)),
-          (Slot(96) .. Slot(127), Opt.none(VerifierError)),
-          (Slot(128) .. Slot(159), Opt.none(VerifierError)),
+          (Slot(0) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+          (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
+          (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
+          (Slot(128) .. Slot(159), Opt.none(SyncVerifierError)),
         ]
       kind = SyncQueueKind.Forward
       verifier = setupVerifier(kind, scenario)
@@ -2556,26 +2556,26 @@ suite "SyncManager test suite":
     let
       scenario =
         [
-          (Slot(128) .. Slot(159), Opt.none(VerifierError)),
+          (Slot(128) .. Slot(159), Opt.none(SyncVerifierError)),
           # .. 3 ranges are empty
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(159), Opt.some(VerifierError.Duplicate)),
-          (Slot(96) .. Slot(127), Opt.none(VerifierError)),
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(159), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(96) .. Slot(127), Opt.none(SyncVerifierError)),
           # .. 2 ranges are empty
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(159), Opt.some(VerifierError.Duplicate)),
-          (Slot(96) .. Slot(127), Opt.some(VerifierError.Duplicate)),
-          (Slot(64) .. Slot(95), Opt.none(VerifierError)),
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(159), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(96) .. Slot(127), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(64) .. Slot(95), Opt.none(SyncVerifierError)),
           # .. 1 range is empty
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(31) .. Slot(31), Opt.some(VerifierError.MissingParent)),
-          (Slot(128) .. Slot(159), Opt.some(VerifierError.Duplicate)),
-          (Slot(96) .. Slot(127), Opt.some(VerifierError.Duplicate)),
-          (Slot(64) .. Slot(95), Opt.some(VerifierError.Duplicate)),
-          (Slot(32) .. Slot(63), Opt.none(VerifierError)),
-          (Slot(0) .. Slot(31), Opt.none(VerifierError))
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(31) .. Slot(31), Opt.some(SyncVerifierError.MissingParent)),
+          (Slot(128) .. Slot(159), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(96) .. Slot(127), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(64) .. Slot(95), Opt.some(SyncVerifierError.Duplicate)),
+          (Slot(32) .. Slot(63), Opt.none(SyncVerifierError)),
+          (Slot(0) .. Slot(31), Opt.none(SyncVerifierError))
         ]
       kind = SyncQueueKind.Backward
       verifier = setupVerifier(kind, scenario)
@@ -2756,7 +2756,7 @@ suite "SyncManager test suite":
   asyncTest "[SyncQueue#Backward] partial range real-case test":
     let
       scenario = [
-        (Slot(3129344) .. Slot(3133504), Opt.none(VerifierError))
+        (Slot(3129344) .. Slot(3133504), Opt.none(SyncVerifierError))
       ]
       verifier = setupVerifier(SyncQueueKind.Backward, scenario)
       queue = SyncQueue.init(SomeTPeer, BlockCompleteness,
@@ -3080,7 +3080,7 @@ suite "SyncManager test suite":
           (ConsensusFork.Gloas, 35, 35, 34, 0),
           (ConsensusFork.Gloas, 36, 36, 35, 0)
         ],
-        @[(31, 31, 0), (34, 34, 31)],
+        @[(31, 31, 0), (34, 34, 33)],
          Result[seq[GloasBlockChainResultItem], string].ok(
           @[
             (ConsensusFork.Gloas, 31, 31, 0, 1, 1),

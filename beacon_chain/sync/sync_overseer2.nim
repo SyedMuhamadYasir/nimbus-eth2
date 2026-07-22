@@ -1742,6 +1742,8 @@ proc doRootSyncStep(
             debug "Block verification NOT passed", reason = $res.error
             restoreRoots()
             return false
+          of SyncVerifierError.InvalidSidecars:
+            raiseAssert "Should not be returned for block verification"
           of SyncVerifierError.MissingParent:
             peer.updateScore(PeerScoreGoodValues)
             debug "Block verification passed", reason = $res.error
@@ -2013,9 +2015,9 @@ proc doRootSidecarsSyncStep(
             of SyncVerifierError.MissingSidecars:
               # We still missing sidecars.
               discard
-            of SyncVerifierError.MissingEnvelope:
-              # We missing envelope
-              discard
+            of SyncVerifierError.InvalidSidecars,
+               SyncVerifierError.MissingEnvelope:
+              raiseAssert("This errors must not happen in Fulu fork")
           else:
             peer.updateScore(PeerScoreGoodValues)
             debug "Block and sidecars by root processor response",
