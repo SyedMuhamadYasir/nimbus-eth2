@@ -722,8 +722,16 @@ proc createQueues(
           # Block does not have envelope and sidecars.
           return res.mapErr(toSyncVerifierError)
 
-        (await overseer.blockProcessor.addPayload(
-          forkyBlck, item.signedEnvelope[], cres)).mapErr(toSyncVerifierError)
+        let pres =
+          await overseer.blockProcessor.addPayload(
+            forkyBlck, item.signedEnvelope[], cres)
+
+        if pres.isErr():
+          debug "Execution payload envelope verification failed",
+            bid = shortLog(item.signedBlock[].toBlockId()),
+            reason = pres.error
+
+        pres.mapErr(toSyncVerifierError)
       else:
         raiseAssert "Unsupported fork"
 
