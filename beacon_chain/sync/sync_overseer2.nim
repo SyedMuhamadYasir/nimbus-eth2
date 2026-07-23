@@ -2328,7 +2328,7 @@ proc doRangeSyncStep(
         overseer.bblockBuffer.invalidate(rewindPoint)
       debug "Blocks queue rewind detected, invalidating block buffer",
         block_buffer_before = before
-      false
+      true
 
   except CancelledError as exc:
     overseer.tbsqueue(direction).push(request)
