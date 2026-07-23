@@ -72,12 +72,16 @@ type
 
   SomeCompleteness* = BlockCompleteness | SomeCompleteness
 
+  SyncRequestState* {.pure.} = enum
+    Download, Queue, Process, Done
+
   SyncRequest*[T] = object
     kind*: SyncQueueKind
     id*: UniqueId
     data*: SyncRange
     flags*: set[SyncRequestFlag]
     reason*: SyncRequestReason
+    state: SyncRequestState
     createMoment*: chronos.Moment
     item*: T
 
@@ -96,7 +100,6 @@ type
   SyncProcessError* {.pure.} = enum
     Invalid,
     MissingParent,
-    GoodAndMissingParent,
     UnviableFork,
     Duplicate,
     Empty,
@@ -160,6 +163,13 @@ template shortLog*[T](req: SyncRequest[T]): string =
     "[empty]"
   else:
     $req.data & "@" & Base10.toString(req.data.count)
+
+template shortLog(s: SyncRequestState): string =
+  case s
+  of SyncRequestState.Download: "downloading"
+  of SyncRequestState.Queue: "waiting"
+  of SyncRequestState.Process: "processing"
+  of SyncRequestState.Done: "finished"
 
 chronicles.formatIt SyncQueueKind: toLowerAscii($it)
 chronicles.expandIt SyncRequest:
@@ -550,6 +560,7 @@ proc init*[T](
     data: SyncRange(slot: FAR_FUTURE_SLOT, count: 0'u64),
     item: item,
     reason: reason,
+    state: SyncRequestState.Done,
     createMoment: Moment.now()
   )
 
@@ -565,6 +576,7 @@ proc init*[M, N](
     data: data,
     item: item,
     id: sq.getId(),
+    state: SyncRequestState.Download,
     createMoment: Moment.now()
   )
 
@@ -1208,6 +1220,7 @@ proc push*[M, N](sq: SyncQueue[M, N], requests: openArray[SyncRequest[M]]) =
       sq.fillCompleteness(
         sq.requests[pos.qindex].data, request.item, Opt.none(ColumnMap),
         done = false, storePeer = false, sq.requests[pos.qindex].completeness)
+    sq.requests[pos.qindex].requests[pos.sindex].state = SyncRequestState.Done
     sq.del(pos)
 
 proc push*[M, N](sq: SyncQueue[M, N], sr: SyncRequest[M]) =
@@ -1236,11 +1249,7 @@ proc process[M, N](
     else:
       case res.error()
       of SyncVerifierError.MissingParent:
-        if slot.isSome() or dupBlock.isSome():
-          return SyncProcessingResult.init(
-            SyncProcessError.GoodAndMissingParent, ritem.slot, ritem.root)
-        else:
-          return SyncProcessingResult.init(res.error(), ritem.slot, ritem.root)
+        return SyncProcessingResult.init(res.error(), ritem.slot, ritem.root)
       of SyncVerifierError.Duplicate:
         # Keep going, happens naturally
         if dupBlock.isNone():
@@ -1272,8 +1281,8 @@ proc process[M, N](
 func isError(e: SyncProcessError): bool =
   case e
   of SyncProcessError.Empty, SyncProcessError.NoError,
-     SyncProcessError.Duplicate, SyncProcessError.GoodAndMissingParent,
-     SyncProcessError.NoRelevant, SyncProcessError.MissingSidecars:
+     SyncProcessError.Duplicate, SyncProcessError.NoRelevant,
+     SyncProcessError.MissingSidecars:
     false
   of SyncProcessError.Invalid, SyncProcessError.UnviableFork,
      SyncProcessError.MissingParent, SyncProcessError.MissingEnvelope,
@@ -1329,17 +1338,17 @@ proc push*[M, N](
       return SyncPushResponse(
         code: SyncProcessError.NoRelevant, count: 0'i64)
 
-  template fillCompleteness(pdone, pblck, pstore: untyped) =
+  template fillCompleteness(ppos, pdone, pblck, pstore: untyped) =
     when N is BlockCompleteness:
       sq.fillCompleteness(
-        sq.requests[position.qindex].data, sr.item, done = pdone,
-        sq.requests[position.qindex].completeness)
+        sq.requests[ppos.qindex].data, sr.item, done = pdone,
+        sq.requests[ppos.qindex].completeness)
     elif N is ColumnCompleteness:
       let map = sq.getMissingMap(data, pblck)
       sq.fillCompleteness(
-        sq.requests[position.qindex].data, sr.item, Opt.some(map),
+        sq.requests[ppos.qindex].data, sr.item, Opt.some(map),
         done = pdone, storePeer = pstore,
-        sq.requests[position.qindex].completeness)
+        sq.requests[ppos.qindex].completeness)
 
   # This is backpressure handling algorithm, this algorithm is blocking
   # all pending `push` requests if `request` is not in range.
@@ -1351,6 +1360,9 @@ proc push*[M, N](
           sq.checkRelevance(sr)
           pos = sq.findPosition(sr)
 
+          sq.requests[pos.qindex].requests[pos.sindex].state =
+            SyncRequestState.Queue
+
           if pos.qindex == 0:
             # Exiting loop when request is first in queue.
             break
@@ -1360,14 +1372,16 @@ proc push*[M, N](
             if res:
               # SyncQueue reset happen
               debug "Request is not relevant anymore, reset has happened",
-                    request = sr, queue = shortLog(sq),
-                    sync_ident = sq.ident,
-                    topics = "sync"
+                request = sr, queue = shortLog(sq), sync_ident = sq.ident,
+                topics = "sync"
               return SyncPushResponse(
                 code: SyncProcessError.NoRelevant, count: 0'i64)
           except CancelledError as exc:
             # Removing request from queue.
-            sq.del(sr)
+            let pos = sq.find(sr).valueOr:
+              raise exc
+            fillCompleteness(pos, false, Opt.none(BlockId), false)
+            sq.del(pos)
             raise exc
         pos
 
@@ -1375,7 +1389,10 @@ proc push*[M, N](
     await sq.lock.acquire()
   except CancelledError as exc:
     # Removing request from queue
-    sq.del(sr)
+    let pos = sq.find(sr).valueOr:
+      raise exc
+    fillCompleteness(pos, false, Opt.none(BlockId), false)
+    sq.del(pos)
     raise exc
 
   var res = 0'i64
@@ -1387,12 +1404,18 @@ proc push*[M, N](
     if not(isNil(processingCb)):
       processingCb()
 
+    sq.requests[position.qindex].requests[position.sindex].state =
+      SyncRequestState.Process
+
     let pres = await sq.process(sr, data, maybeFinalized)
 
     # We need to update position, because while we waiting for `process()` to
     # complete - clearAndWakeup() could be invoked which could clean whole the
     # queue (invalidating all the positions).
     position = sq.findPosition(sr)
+
+    sq.requests[position.qindex].requests[position.sindex].state =
+      SyncRequestState.Done
 
     case pres.code
     of SyncProcessError.Empty:
@@ -1419,18 +1442,18 @@ proc push*[M, N](
       # peers returns empty response for the same range.
       if sq.requests[position.qindex].voidsCount >= sq.requestsCount:
         when N is BlockCompleteness:
-          fillCompleteness(true, Opt.none(BlockId), false)
+          fillCompleteness(position, true, Opt.none(BlockId), false)
           sq.advanceQueue(res)
         elif N is ColumnCompleteness:
           let localMap = sq.cbGetLocalColumnMap()
           # If completeness map was changed it proves that specific range is
           # not actually empty and we should not move forward.
           if sq.requests[position.qindex].completeness.missingMap != localMap:
-            fillCompleteness(false, Opt.none(BlockId), false)
+            fillCompleteness(position, false, Opt.none(BlockId), false)
           else:
-            fillCompleteness(true, Opt.none(BlockId), false)
+            fillCompleteness(position, true, Opt.none(BlockId), false)
       else:
-        fillCompleteness(false, Opt.none(BlockId), false)
+        fillCompleteness(position, false, Opt.none(BlockId), false)
 
     of SyncProcessError.Duplicate:
       # Duplicate responses does not affect failures count
@@ -1446,7 +1469,7 @@ proc push*[M, N](
             topics = "sync"
 
       sq.gapList.reset()
-      fillCompleteness(true, Opt.none(BlockId), false)
+      fillCompleteness(position, true, Opt.none(BlockId), false)
       sq.advanceQueue(res)
 
     of SyncProcessError.MissingSidecars:
@@ -1461,7 +1484,7 @@ proc push*[M, N](
             sync_ident = sq.ident,
             topics = "sync"
 
-      fillCompleteness(false, pres.blck, true)
+      fillCompleteness(position, false, pres.blck, true)
       sq.del(position)
       res = 0'i64
 
@@ -1477,7 +1500,7 @@ proc push*[M, N](
             sync_ident = sq.ident,
             topics = "sync"
 
-      fillCompleteness(false, pres.blck, true)
+      fillCompleteness(position, false, pres.blck, true)
       sq.del(position)
       res = 0'i64
 
@@ -1493,7 +1516,7 @@ proc push*[M, N](
             sync_ident = sq.ident,
             topics = "sync"
 
-      fillCompleteness(false, pres.blck, true)
+      fillCompleteness(position, false, pres.blck, true)
       sq.del(position)
       res = 0'i64
 
@@ -1511,7 +1534,7 @@ proc push*[M, N](
             topics = "sync"
 
       inc(sq.requests[position.qindex].failuresCount)
-      fillCompleteness(false, pres.blck, false)
+      fillCompleteness(position, false, pres.blck, false)
       sq.del(position)
       res = 0'i64
 
@@ -1530,7 +1553,7 @@ proc push*[M, N](
 
       sr.item.updateScore(PeerScoreUnviableFork)
       inc(sq.requests[position.qindex].failuresCount)
-      fillCompleteness(false, pres.blck, false)
+      fillCompleteness(position, false, pres.blck, false)
       sq.del(position)
       res = 0'i64
 
@@ -1552,28 +1575,7 @@ proc push*[M, N](
       sq.rewardForGaps(PeerScoreMissingValues)
       sq.gapList.reset()
       inc(sq.requests[position.qindex].failuresCount)
-      fillCompleteness(false, pres.blck, false)
-      sq.del(position)
-      res = 0'i64
-
-    of SyncProcessError.GoodAndMissingParent:
-      # Responses which has at least one good block and a gap does not affect
-      # failures count
-      debug "Unexpected missing parent, but no rewind needed",
-            request = sr,
-            queue = shortLog(sq),
-            finalized_slot = sq.getSafeSlot(),
-            missing_parent_block = pres.blck,
-            completeness = shortLog(sq.requests[position.qindex].completeness),
-            voids_count = sq.requests[position.qindex].voidsCount,
-            failures_count = sq.requests[position.qindex].failuresCount,
-            blocks_count = len(data),
-            blocks_map = getShortMap(sr, data),
-            sync_ident = sq.ident,
-            topics = "sync"
-
-      sr.item.updateScore(PeerScoreMissingValues)
-      fillCompleteness(false, pres.blck, false)
+      fillCompleteness(position, false, pres.blck, false)
       sq.del(position)
       res = 0'i64
 
@@ -1586,7 +1588,7 @@ proc push*[M, N](
       if sr.hasEndGap(data):
         sq.gapList.add(GapItem.init(sr))
 
-      fillCompleteness(true, Opt.none(BlockId), false)
+      fillCompleteness(position, true, Opt.none(BlockId), false)
       sq.advanceQueue(res)
 
     of SyncProcessError.NoRelevant:
@@ -1610,10 +1612,10 @@ proc push*[M, N](
             getRetreatCount(sr.data.last_slot(), point)
     SyncPushResponse(code: pres.code, count: res, blck: pres.blck)
   except CancelledError as exc:
-    let pos = sq.find(sr)
-    if pos.isSome():
-      fillCompleteness(false, Opt.none(BlockId), false)
-      sq.del(pos.get())
+    let pos = sq.find(sr).valueOr:
+      raise exc
+    fillCompleteness(pos, false, Opt.none(BlockId), false)
+    sq.del(pos)
     raise exc
   finally:
     try:
@@ -1695,6 +1697,7 @@ proc debugJsonDump*[M, N](sq: SyncQueue[M, N]): string =
             ",\"flags\":\"" & shortLog(it.flags) & "\"" &
             ",\"created\":\"" & $(moment - it.createMoment) & "\"" &
             ",\"peer\":\"" & shortLog(getKey(it.item)) & "\"" &
+            ",\"state\":\"" & shortLog(it.state) & "\"" &
             ",\"peer_map\":\"" & $(sq.cbGetColumnMap(it.item)) & "\"" &
           "}"
         ).join(",")

@@ -584,10 +584,13 @@ proc createQueues(
             if bres.isErr() or isNil(item.signedEnvelope):
               return bres.mapErr(toSyncVerifierError)
 
+            # In this case `addPayload` must not return
+            # `MissingSidecars`, `InvalidSidecars` or `MissingEnvelope`.
             if commitmentsLen > 0:
               (await overseer.blockProcessor.addPayload(
                 forkyBlck, item.signedEnvelope[],
-                Opt.none(gloas.DataColumnSidecars))).mapErr(toSyncVerifierError)
+                Opt.none(gloas.DataColumnSidecars))).
+                mapErr(toSyncVerifierError)
             else:
               (await overseer.blockProcessor.addPayload(
                 forkyBlck, item.signedEnvelope[],

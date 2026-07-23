@@ -290,25 +290,25 @@ func createBlockChain(
     res.add(item)
   res
 
-func createChain(slots: openArray[Slot]): seq[SyncResponseItem] =
-  var
-    res: seq[SyncResponseItem]
-    root = 0
+# func createChain(slots: openArray[Slot]): seq[SyncResponseItem] =
+#   var
+#     res: seq[SyncResponseItem]
+#     root = 0
 
-  for slot in slots:
-    let item = newClone ForkedSignedBeaconBlock(kind: ConsensusFork.Deneb)
-    item[].denebData.message.slot = slot
-    if root == 0:
-      item[].denebData.root = createDigest(1)
-      item[].denebData.message.parent_root = createDigest(0)
-      inc(root)
-    else:
-      let prev_root = root
-      inc(root)
-      item[].denebData.root = createDigest(root)
-      item[].denebData.message.parent_root = createDigest(prev_root)
-    res.add(SyncResponseItem.init(item, nil))
-  res
+#   for slot in slots:
+#     let item = newClone ForkedSignedBeaconBlock(kind: ConsensusFork.Deneb)
+#     item[].denebData.message.slot = slot
+#     if root == 0:
+#       item[].denebData.root = createDigest(1)
+#       item[].denebData.message.parent_root = createDigest(0)
+#       inc(root)
+#     else:
+#       let prev_root = root
+#       inc(root)
+#       item[].denebData.root = createDigest(root)
+#       item[].denebData.message.parent_root = createDigest(prev_root)
+#     res.add(SyncResponseItem.init(item, nil))
+#   res
 
 proc createChain(srange: SyncRange): seq[SyncResponseItem] =
   createChain(srange.slot .. (srange.slot + srange.count - 1))
@@ -1457,14 +1457,6 @@ suite "SyncManager test suite":
               (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
               (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
               (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(41) .. Slot(41), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(32) .. Slot(40), Opt.some(SyncVerifierError.Duplicate)),
               (Slot(41) .. Slot(63), Opt.none(SyncVerifierError))
             ]
           of SyncQueueKind.Backward:
@@ -1475,15 +1467,7 @@ suite "SyncManager test suite":
               (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
               (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
               (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(21) .. Slot(21), Opt.some(SyncVerifierError.MissingParent)),
-              (Slot(22) .. Slot(31), Opt.some(SyncVerifierError.Duplicate)),
-              (Slot(0) .. Slot(21), Opt.none(SyncVerifierError)),
+              (Slot(0) .. Slot(21), Opt.none(SyncVerifierError))
             ]
         verifier = setupVerifier(kind, scenario)
         sq =
@@ -1493,7 +1477,7 @@ suite "SyncManager test suite":
                            kind, Slot(0), Slot(63),
                            32'u64, # 32 slots per request
                            3, # 3 concurrent requests
-                           2, # 2 failures allowed
+                           3, # 3 failures allowed
                            getStaticSlotCb(Slot(0)),
                            verifier.collector,
                            testforkAtEpoch)
@@ -1502,7 +1486,7 @@ suite "SyncManager test suite":
                            kind, Slot(63), Slot(0),
                            32'u64, # 32 slots per request
                            3, # 3 concurrent requests
-                           2, # 2 failures allowed
+                           3, # 3 failures allowed
                            getStaticSlotCb(Slot(63)),
                            verifier.collector,
                            testforkAtEpoch)
@@ -1554,7 +1538,7 @@ suite "SyncManager test suite":
         f13.finished == true
 
       check:
-        (await noCancel f23).count == 0
+        (await noCancel f23).count == 32
       check:
         f21.finished == true
         f22.finished == true
@@ -1562,35 +1546,6 @@ suite "SyncManager test suite":
         f11.finished == true
         f12.finished == true
         f13.finished == true
-
-      let
-        r31 = sq.pop(Slot(63), peer1)
-        r32 = sq.pop(Slot(63), peer2)
-        r33 = sq.pop(Slot(63), peer3)
-        d31 = createChain(r31.data)
-        d32 = createChain(r32.data)
-        d33 = createChain(r33.data)
-        f31 = sq.push(r31, d31)
-        f32 = sq.push(r32, d32)
-        f33 = sq.push(r33, d33)
-
-      check:
-        (await noCancel f31).count == 0
-        (await noCancel f32).count == 0
-        (await noCancel f33).count == 0
-
-      let
-        r41 = sq.pop(Slot(63), peer1)
-        r42 = sq.pop(Slot(63), peer2)
-        r43 = sq.pop(Slot(63), peer3)
-        d41 = createChain(r41.data)
-        d42 = createChain(r42.data)
-        d43 = createChain(r43.data)
-        f42 = sq.push(r32, d42)
-        f41 = sq.push(r31, d41)
-        f43 = sq.push(r33, d43)
-
-      await noCancel allFutures(f42, f41, f43)
 
       await noCancel wait(verifier.verifier, 2.seconds)
 
