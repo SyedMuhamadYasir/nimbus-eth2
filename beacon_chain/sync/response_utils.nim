@@ -253,6 +253,7 @@ func validateBlocks*(
       # No more block items
       if sindex < len(sidecars):
         return err(MissingErrorKind.Blocks)
+      break
     withBlck(items[bindex].signedBlock[]):
       when consensusFork == ConsensusFork.Fulu:
         let commitmentsLen = len(forkyBlck.message.body.blob_kzg_commitments)
@@ -269,7 +270,6 @@ func validateBlocks*(
       else:
         raiseAssert("checkResponse() already checked the fork!")
     inc(bindex)
-
   ok()
 
 func validateBlocks*(
@@ -286,6 +286,7 @@ func validateBlocks*(
       # No more block items
       if sindex < len(sidecars):
         return err(MissingErrorKind.Blocks)
+      break
     withBlck(items[bindex].signedBlock[]):
       when consensusFork == ConsensusFork.Gloas:
         let commitmentsLen =
