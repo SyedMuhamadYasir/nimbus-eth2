@@ -1603,9 +1603,10 @@ proc doPeerUpdateMetadata(
     newCgc = peer.lookupCgcFromPeer().valueOr:
       CUSTODY_REQUIREMENT
 
-  debug "Peer metadata information updated",
-    old_cgc = cgc, old_map = map,
-    new_cgc = newCgc, new_map = newMap
+  if newMap != map:
+    debug "Peer metadata information updated",
+      old_cgc = cgc, old_map = map,
+      new_cgc = newCgc, new_map = newMap
 
   true
 
@@ -2237,7 +2238,7 @@ proc doRangeSyncStep(
       blocks_count = len(blocks),
       blocks_map = getShortMap(request, blocks.asSeq())
 
-    checkResponse(request.data, blocks.asSeq()).isOkOr:
+    checkResponse(request.data, consensusFork, blocks.asSeq()).isOkOr:
       debug "Incorrect range of blocks received",
         blocks_count = len(blocks),
         blocks_map = getShortMap(request, blocks.asSeq()),
@@ -2492,6 +2493,42 @@ proc checkPeerColumnSidecars(
       missingCount: missingCount,
       missingLog: missingLog))
 
+proc doRewindBlocksQueue(
+    overseer: SyncOverseerRef2,
+    peer: Peer,
+    request: SyncRequest[Peer],
+    direction: SyncQueueKind,
+): Future[void] {.async: (raises: [CancelledError]).} =
+  logScope:
+    peer = peer
+    request = request
+    direction = direction
+
+  let
+    rewindPoint = request.data.slot
+    beforeBuffer = shortLog(overseer.tsbuffer(direction))
+    beforeBQueue = shortLog(overseer.tbsqueue(direction))
+    beforeSQueue = shortLog(overseer.tssqueue(direction))
+
+  case direction
+  of SyncQueueKind.Forward:
+    if overseer.tbsqueue(direction).inpSlot > rewindPoint:
+      overseer.fblockBuffer.invalidate(rewindPoint)
+      await overseer.tbsqueue(direction).resetWait(rewindPoint)
+  of SyncQueueKind.Backward:
+    if overseer.tbsqueue(direction).inpSlot < rewindPoint:
+      overseer.bblockBuffer.invalidate(rewindPoint)
+      await overseer.tbsqueue(direction).resetWait(rewindPoint)
+
+  debug "Rewinding blocks queue, because some items are missing",
+    rewind_point = rewindPoint,
+    before_block_buffer = beforeBuffer,
+    before_blocks_queue = beforeBQueue,
+    before_sidecars_queue = beforeSQueue,
+    block_buffer = shortLog(overseer.tsbuffer(direction)),
+    blocks_queue = shortLog(overseer.tbsqueue(direction)),
+    sidecars_queue = shortLog(overseer.tssqueue(direction))
+
 proc doFuluRangeSidecarsRequest(
     overseer: SyncOverseerRef2,
     peer: Peer,
@@ -2566,38 +2603,30 @@ proc doFuluRangeSidecarsRequest(
     grouped.reset()
 
   # Early detection of empty response.
-  let
-    (sindex, bcount) =
-      validateBlocks(items, grouped, pdata.intersectMap).valueOr:
-        peer.updateScore(PeerScoreMissingValues)
-        debug "Received non-complete data column sidecars range",
-          reason = $error, columns_count = len(data),
-          map = shortLog(pdata.intersectMap),
-          blocks = shortLog(items),
-          columns = shortLog(grouped)
-        overseer.tssqueue(direction).push(request)
-        return err(false)
-
-  if (sindex == 0) and (bcount > 0):
-    # Empty response case, when we sure that blocks with sidecars
-    # exists in the range.
-    debug "Received empty columns range"
+  validateBlocks(request.data, items, grouped).isOkOr:
     peer.updateScore(PeerScoreMissingValues)
+    debug "Received non-complete data column sidecars range",
+      reason = $error, columns_count = len(data),
+      map = shortLog(pdata.intersectMap),
+      blocks = shortLog(items),
+      columns = shortLog(grouped)
     overseer.tssqueue(direction).push(request)
-    return err(false)
+
+    if error == MissingErrorKind.Sidecars:
+      return err(false)
+
+    # We either missed a few blocks, and got a number of sidecars
+    # that prove it, so we need to rewind blocks queue back.
+    await overseer.doRewindBlocksQueue(peer, request, direction)
+
+    peer.updateScore(PeerScoreGoodValues)
+    return err(true)
 
   for record in grouped:
     overseer.fuluColumnQuarantine[].put(
       record.block_root, record.sidecar, false)
 
   peer.updateScore(PeerScoreGoodValues)
-
-  if (len(items) == 0) and (len(grouped) > 0):
-    # Case when we have no blocks, but a lot of blobs.
-    debug "Received columns range which do not have corresponding blocks range"
-    overseer.tssqueue(direction).push(request)
-    return err(false)
-
   ok()
 
 proc doGloasRangeSidecarsRequest(
@@ -2676,42 +2705,30 @@ proc doGloasRangeSidecarsRequest(
     grouped.reset()
 
   # Early detection of empty response.
-  let
-    (sindex, bcount) =
-      validateBlocks(items, grouped, pdata.intersectMap).valueOr:
-        peer.updateScore(PeerScoreMissingValues)
-        debug "Received non-complete data column sidecars range",
-          reason = $error, columns_count = len(data),
-          map = shortLog(pdata.intersectMap),
-          blocks = shortLog(items),
-          columns = shortLog(grouped)
-        overseer.tssqueue(direction).push(request)
-        return err(false)
-
-  if (sindex == 0) and (bcount > 0):
-    # Empty response case, when we sure that blocks with sidecars
-    # exists in the range.
-    debug "Received empty columns range",
-      columns_map = getShortMap(request, pdata.intersectMap, data.toSeq()),
-      items_map = getShortMap(request, items),
-      items = shortLog(items),
-      columns = slimLog(data.asSeq())
+  validateBlocks(request.data, items, grouped).isOkOr:
     peer.updateScore(PeerScoreMissingValues)
+    debug "Received non-complete data column sidecars range",
+      reason = $error, columns_count = len(data),
+      map = shortLog(pdata.intersectMap),
+      blocks = shortLog(items),
+      columns = shortLog(grouped)
     overseer.tssqueue(direction).push(request)
-    return err(false)
+
+    if error == MissingErrorKind.Sidecars:
+      return err(false)
+
+    # We either missed a few blocks or envelopes, and got a number of sidecars
+    # that prove it, so we need to rewind blocks queue back.
+    await overseer.doRewindBlocksQueue(peer, request, direction)
+
+    peer.updateScore(PeerScoreGoodValues)
+    return err(true)
 
   for record in grouped:
     overseer.gloasColumnQuarantine[].put(
       record.block_root, record.sidecar, false)
 
   peer.updateScore(PeerScoreGoodValues)
-
-  if (len(items) == 0) and (len(grouped) > 0):
-    # Case when we have no blocks, but a lot of blobs.
-    debug "Received columns range which do not have corresponding blocks range"
-    overseer.tssqueue(direction).push(request)
-    return err(false)
-
   ok()
 
 proc doRangeSidecarsStep(

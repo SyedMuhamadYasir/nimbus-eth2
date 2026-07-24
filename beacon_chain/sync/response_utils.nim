@@ -37,6 +37,18 @@ type
   GloasColumnSidecarResponseRecord* =
     SidecarResponseRecord[gloas.DataColumnSidecar]
 
+  MissingErrorKind* {.pure.} = enum
+    Blocks, Sidecars, Envelopes
+
+func `$`*(m: MissingErrorKind): string =
+  case m
+  of MissingErrorKind.Blocks:
+    "Some of the blocks are missing"
+  of MissingErrorKind.Sidecars:
+    "Some of the sidecars are missing"
+  of MissingErrorKind.Envelopes:
+    "Some of the envelopes are missing"
+
 func toEnvelopeHid*(
   envelope: gloas.SignedExecutionPayloadEnvelope
 ): EnvelopeHid =
@@ -219,59 +231,86 @@ func groupEnvelopes*(
   toResponse(blocks, envelopes)
 
 func validateBlocks*(
-    items: openArray[SyncResponseItem],
-    sidecars: openArray[FuluColumnSidecarResponseRecord],
-    map: ColumnMap
-): Result[tuple[sidecars: int, blocks: int], cstring] =
-  var
-    sindex = 0
-    bcount = 0
-  for item in items:
-    withBlck(item.signedBlock[]):
-      when consensusFork == ConsensusFork.Fulu:
-        let commitmentsLen = len(forkyBlck.message.body.blob_kzg_commitments)
-        if commitmentsLen == 0:
-          continue
-        inc(bcount)
-        while sindex < len(sidecars):
-          let record = sidecars[sindex]
-          if record.block_root != forkyBlck.root:
-            break
-          inc(sindex)
-      else:
-        return err("Found block with incorrect fork")
-
-  ok((sindex, bcount))
+    consensusFork: ConsensusFork,
+    blocks: openArray[ref ForkedSignedBeaconBlock]
+): Result[void, cstring] =
+  for blck in blocks:
+    if blck.kind != consensusFork:
+      return err("Block with incorrect fork encountered")
+  ok()
 
 func validateBlocks*(
+    srange: SyncRange,
     items: openArray[SyncResponseItem],
-    sidecars: openArray[GloasColumnSidecarResponseRecord],
-    map: ColumnMap
-): Result[tuple[sidecars: int, blocks: int], cstring] =
+    sidecars: openArray[FuluColumnSidecarResponseRecord],
+): Result[void, MissingErrorKind] =
   var
+    bindex = 0
     sindex = 0
-    bcount = 0
-  for item in items:
-    withBlck(item.signedBlock[]):
+
+  for slot in srange:
+    if bindex >= len(items):
+      # No more block items
+      if sindex < len(sidecars):
+        return err(MissingErrorKind.Blocks)
+    withBlck(items[bindex].signedBlock[]):
+      when consensusFork == ConsensusFork.Fulu:
+        let commitmentsLen = len(forkyBlck.message.body.blob_kzg_commitments)
+        if commitmentsLen > 0:
+          var sidecarsLen = 0
+          while sindex < len(sidecars):
+            let record = sidecars[sindex]
+            if record.block_root != forkyBlck.root:
+              break
+            inc(sidecarsLen)
+            inc(sindex)
+          if sidecarsLen == 0:
+            return err(MissingErrorKind.Sidecars)
+      else:
+        raiseAssert("checkResponse() already checked the fork!")
+    inc(bindex)
+
+  ok()
+
+func validateBlocks*(
+    srange: SyncRange,
+    items: openArray[SyncResponseItem],
+    sidecars: openArray[GloasColumnSidecarResponseRecord]
+): Result[void, MissingErrorKind] =
+  var
+    bindex = 0
+    sindex = 0
+
+  for slot in srange:
+    if bindex >= len(items):
+      # No more block items
+      if sindex < len(sidecars):
+        return err(MissingErrorKind.Blocks)
+    withBlck(items[bindex].signedBlock[]):
       when consensusFork == ConsensusFork.Gloas:
         let commitmentsLen =
           len(forkyBlck.message.body.signed_execution_payload_bid.
               message.blob_kzg_commitments)
-        if commitmentsLen == 0:
-          continue
-        inc(bcount)
-        while sindex < len(sidecars):
-          let record = sidecars[sindex]
-          if record.block_root != forkyBlck.root:
-            break
-          inc(sindex)
+        if commitmentsLen > 0:
+          var sidecarsLen = 0
+          while sindex < len(sidecars):
+            let record = sidecars[sindex]
+            if record.block_root != forkyBlck.root:
+              break
+            inc(sidecarsLen)
+            inc(sindex)
+          if (sidecarsLen == 0) and not(isNil(items[bindex].signedEnvelope)):
+            return err(MissingErrorKind.Sidecars)
+          if (sidecarsLen > 0) and isNil(items[bindex].signedEnvelope):
+            return err(MissingErrorKind.Envelopes)
       else:
-        return err("Found block with incorrect fork")
-
-  ok((sindex, bcount))
+        raiseAssert("checkResponse() already checked the fork!")
+    inc(bindex)
+  ok()
 
 func checkResponse*(
     srange: SyncRange,
+    consensusFork: ConsensusFork,
     items: openArray[ref ForkedSignedBeaconBlock]
 ): Result[void, cstring] =
   ## This procedure checks peer's getBlockByRange() response.
@@ -286,6 +325,8 @@ func checkResponse*(
     root: Eth2Digest
 
   for ritem in items:
+    if ritem.kind != consensusFork:
+      return err("Some of the blocks from incorrect fork")
     let bid = ritem[].toBlockHid()
     if bid.slot notin srange:
       return err("Some of the blocks are outside the requested range")

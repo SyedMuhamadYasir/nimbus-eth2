@@ -2845,89 +2845,90 @@ suite "SyncManager test suite":
       r2 = SyncRequest[SomeTPeer](data: SyncRange.init(Slot(11), 2'u64))
       r3 = SyncRequest[SomeTPeer](data: SyncRange.init(Slot(11), 3'u64))
       r4 = SyncRequest[SomeTPeer](data: SyncRange.init(Slot(11), 4'u64))
+      fork = ConsensusFork.Deneb
 
     check:
-      checkResponse(r1.data,
+      checkResponse(r1.data, fork,
         createBlockChain([Slot(11)])).isOk() == true
-      checkResponse(r1.data,
+      checkResponse(r1.data, fork,
         createBlockChain(@[])).isOk() == true
-      checkResponse(r1.data,
+      checkResponse(r1.data, fork,
         createBlockChain(@[Slot(11), Slot(11)])).isOk() == false
-      checkResponse(r1.data,
+      checkResponse(r1.data, fork,
         createBlockChain([Slot(10)])).isOk() == false
-      checkResponse(r1.data,
+      checkResponse(r1.data, fork,
         createBlockChain([Slot(12)])).isOk() == false
 
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(11)])).isOk() == true
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(12)])).isOk() == true
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain(@[])).isOk() == true
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(11), Slot(12)])).isOk() == true
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(12)])).isOk() == true
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(11), Slot(12), Slot(13)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(10), Slot(11)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(10)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(12), Slot(11)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(12), Slot(13)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(13)])).isOk() == false
 
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(11), Slot(11)])).isOk() == false
-      checkResponse(r2.data,
+      checkResponse(r2.data, fork,
         createBlockChain([Slot(12), Slot(12)])).isOk() == false
 
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(12)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(13)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(13)])).isOk() == true
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(13), Slot(12)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(13), Slot(11)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13), Slot(12), Slot(11)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13), Slot(11)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13), Slot(12)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(11)])).isOk() == false
 
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(11), Slot(11)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(12), Slot(12)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(13), Slot(13)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(13), Slot(13)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(12), Slot(12)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13), Slot(13), Slot(13)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(11), Slot(11)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(12), Slot(12)])).isOk() == false
-      checkResponse(r3.data,
+      checkResponse(r3.data, fork,
         createBlockChain(@[Slot(13), Slot(13)])).isOk() == false
 
     var
@@ -2944,10 +2945,10 @@ suite "SyncManager test suite":
       forkyBlck.message.parent_root = Eth2Digest()
 
     check:
-      checkResponse(r4.data, chain1).isOk() == true
-      checkResponse(r4.data, chain2).isOk() == false
-      checkResponse(r4.data, chain3).isOk() == false
-      checkResponse(r4.data, chain4).isOk() == false
+      checkResponse(r4.data, fork, chain1).isOk() == true
+      checkResponse(r4.data, fork, chain2).isOk() == false
+      checkResponse(r4.data, fork, chain3).isOk() == false
+      checkResponse(r4.data, fork, chain4).isOk() == false
 
   test "combineResponse() test":
     let TestVectors = [
