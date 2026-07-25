@@ -923,8 +923,7 @@ proc updatePeerStatus(overseer: SyncOverseerRef2, peer: Peer) =
       overseer.lastSeenHead = Opt.some(blockId)
       overseer.updateQueues()
 
-  let entry = overseer.sdag.peers.getOrDefault(peer.getKey())
-  if isNil(entry):
+  let entry = overseer.sdag.getPeerEntry(peer.getKey).valueOr:
     return
 
   for root in pendingRoots:
@@ -945,9 +944,10 @@ proc updatePeer(
     envelopeMissed: bool,
     src: DagBlockSourceType
 ) =
-  let peerEntry = overseer.sdag.peers.getOrDefault(peerId)
-  if isNil(peerEntry) and peerMustPresent:
-    return
+  let peerEntry = overseer.sdag.getPeerEntry(peerId).valueOr:
+    if peerMustPresent:
+      return
+    nil
 
   let
     missingParentRoot =
@@ -1431,16 +1431,10 @@ proc doPeerPause(
     dag = overseer.consensusManager.dag
     timeParams = dag.cfg.timeParams
     peerHead = peer.getHeadBlockId()
-    peerEntry =
-      block:
-        let res = overseer.sdag.peers.getOrDefault(peer.getKey())
-        if isNil(res): return
-        res
-    hentry =
-      block:
-        let res = overseer.sdag.roots.getOrDefault(peerHead.root)
-        if isNil(res): return
-        res
+    peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
+      return
+    hentry = overseer.sdag.getRootEntry(peerHead.root).valueOr:
+      return
 
   logScope:
     peer = peer
@@ -1615,11 +1609,8 @@ proc doRootSyncStep(
     peer: Peer,
 ): Future[bool] {.async: (raises: [CancelledError]).} =
   let
-    peerEntry =
-      block:
-        let res = overseer.sdag.peers.getOrDefault(peer.getKey())
-        if isNil(res): return false
-        res
+    peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
+      return false
   var
     roots =
       block:
@@ -1990,53 +1981,54 @@ proc doRootSidecarsSyncStep(
       when consensusFork == ConsensusFork.Fulu:
         debug "Processing single block and sidecars by root",
           blck = slimLog(signedBlock)
-        let entry = overseer.sdag.roots.getOrDefault(forkyBlck.root)
-        if not(isNil(entry)):
-          let res = await overseer.verifyBlock(forkyBlck, false)
-          if res.isErr():
-            debug "Block and sidecars by root processor response",
-              reason = res.error, blck = slimLog(signedBlock)
-            case res.error
-            of SyncVerifierError.Invalid:
-              peer.updateScore(PeerScoreBadValues)
-              entry.flags.incl(
-                {DagEntryFlag.Pending, DagEntryFlag.MissingSidecars})
-              entry.parent = nil
-              overseer.blockQuarantine[].remove(forkyBlck)
-              overseer.fuluColumnQuarantine[].remove(forkyBlck.root)
-              # We add this block's root into global missing root table, so
-              # all other peers will try to re-download it again.
-              overseer.missingRoots.incl(forkyBlck.root)
-              return false
-            of SyncVerifierError.UnviableFork:
-              peer.updateScore(PeerScoreUnviableFork)
-              entry.flags.excl(DagEntryFlag.MissingSidecars)
-              entry.flags.incl(DagEntryFlag.Unviable)
-              overseer.missingSidecars.excl(forkyBlck.root)
-              return false
-            of SyncVerifierError.MissingParent:
-              peer.updateScore(PeerScoreGoodValues)
-              entry.flags.excl(DagEntryFlag.MissingSidecars)
-              peerEntry.pendingRoots.add(forkyBlck.message.parent_root)
-              overseer.missingSidecars.excl(forkyBlck.root)
-            of SyncVerifierError.Duplicate:
-              # This flags means that we have sidecars.
-              peer.updateScore(PeerScoreGoodValues)
-              entry.flags.excl(DagEntryFlag.MissingSidecars)
-              overseer.missingSidecars.excl(forkyBlck.root)
-            of SyncVerifierError.MissingSidecars:
-              # We still missing sidecars.
-              discard
-            of SyncVerifierError.InvalidSidecars,
-               SyncVerifierError.MissingEnvelope:
-              raiseAssert("This errors must not happen in Fulu fork")
-          else:
-            peer.updateScore(PeerScoreGoodValues)
-            debug "Block and sidecars by root processor response",
-              reason = "ok", blck = slimLog(signedBlock)
+        let
+          entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
+            continue
+          res = await overseer.verifyBlock(forkyBlck, false)
+        if res.isErr():
+          debug "Block and sidecars by root processor response",
+            reason = res.error, blck = slimLog(signedBlock)
+          case res.error
+          of SyncVerifierError.Invalid:
+            peer.updateScore(PeerScoreBadValues)
+            entry.flags.incl(
+              {DagEntryFlag.Pending, DagEntryFlag.MissingSidecars})
+            entry.parent = nil
             overseer.blockQuarantine[].remove(forkyBlck)
+            overseer.fuluColumnQuarantine[].remove(forkyBlck.root)
+            # We add this block's root into global missing root table, so
+            # all other peers will try to re-download it again.
+            overseer.missingRoots.incl(forkyBlck.root)
+            return false
+          of SyncVerifierError.UnviableFork:
+            peer.updateScore(PeerScoreUnviableFork)
+            entry.flags.excl(DagEntryFlag.MissingSidecars)
+            entry.flags.incl(DagEntryFlag.Unviable)
+            overseer.missingSidecars.excl(forkyBlck.root)
+            return false
+          of SyncVerifierError.MissingParent:
+            peer.updateScore(PeerScoreGoodValues)
+            entry.flags.excl(DagEntryFlag.MissingSidecars)
+            peerEntry.pendingRoots.add(forkyBlck.message.parent_root)
+            overseer.missingSidecars.excl(forkyBlck.root)
+          of SyncVerifierError.Duplicate:
+            # This flags means that we have sidecars.
+            peer.updateScore(PeerScoreGoodValues)
             entry.flags.excl(DagEntryFlag.MissingSidecars)
             overseer.missingSidecars.excl(forkyBlck.root)
+          of SyncVerifierError.MissingSidecars:
+            # We still missing sidecars.
+            discard
+          of SyncVerifierError.InvalidSidecars,
+             SyncVerifierError.MissingEnvelope:
+            raiseAssert("This errors must not happen in Fulu fork")
+        else:
+          peer.updateScore(PeerScoreGoodValues)
+          debug "Block and sidecars by root processor response",
+            reason = "ok", blck = slimLog(signedBlock)
+          overseer.blockQuarantine[].remove(forkyBlck)
+          entry.flags.excl(DagEntryFlag.MissingSidecars)
+          overseer.missingSidecars.excl(forkyBlck.root)
       elif consensusFork == ConsensusFork.Gloas:
         # For Gloas fork, we do not do any processing, all the processing will
         # happen later in doRootEnvelopeSyncStep().
@@ -2127,8 +2119,7 @@ proc doRootEnvelopeSyncStep(
               reason = res.error, blck = slimLog(record.signedBlock)
             continue
 
-        let entry = overseer.sdag.roots.getOrDefault(forkyBlck.root)
-        if isNil(entry):
+        let entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
           continue
 
         if record.signedEnvelope.isNil() and
@@ -2171,13 +2162,8 @@ proc doRangeSyncStep(
     direction: SyncQueueKind
 ): Future[bool] {.async: (raises: [CancelledError]).} =
   let
-    peerEntry =
-      block:
-        let res = overseer.sdag.peers.getOrDefault(peer.getKey())
-        if isNil(res):
-          debug "Peer entry does not exist anymore", peer = peer
-          return false
-        res
+    peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
+      return false
     dag = overseer.consensusManager.dag
     checkpoint = peer.getFinalizedCheckpoint()
     request =
@@ -2737,13 +2723,8 @@ proc doRangeSidecarsStep(
     direction: SyncQueueKind
 ): Future[bool] {.async: (raises: [CancelledError]).} =
   let
-    peerEntry =
-      block:
-        let res = overseer.sdag.peers.getOrDefault(peer.getKey())
-        if isNil(res):
-          debug "Peer entry does not exist anymore", peer = peer
-          return false
-        res
+    peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
+      return false
     dag = overseer.consensusManager.dag
     checkpoint = peer.getFinalizedCheckpoint()
     peerMap = peer.getColumnMapOrDefault()
@@ -3545,20 +3526,15 @@ proc missingBlocksMonitoringLoop(
   try:
     while true:
         await overseer.blockQuarantine[].missingEvent.wait()
-
         let missingRoots = overseer.blockQuarantine[].checkMissing(high(int))
-
         for record in missingRoots:
-          let entry = overseer.sdag.roots.getOrDefault(record.root)
-          if not(isNil(entry)):
-            entry.flags.incl(DagEntryFlag.Pending)
-          else:
+          let entry = overseer.sdag.getRootEntry(record.root).valueOr:
             overseer.missingRoots.incl(record.root)
             debug "Missing block root inserted into queue",
-               block_root = record.root
-
+              block_root = record.root
+            continue
+          entry.flags.incl(DagEntryFlag.Pending)
         overseer.blockQuarantine[].missingEvent.clear()
-
   except CancelledError:
     discard
 
@@ -3585,17 +3561,7 @@ proc missingSidecarsMonitoringLoop(
               res.add((consensusFork, bid))
           res
       for record in missingSidecars:
-        let entry = overseer.sdag.roots.getOrDefault(record.bid.root)
-        if not(isNil(entry)):
-          entry.flags.incl(DagEntryFlag.MissingSidecars)
-          withConsensusFork(record.consensusFork):
-            when consensusFork < ConsensusFork.Gloas:
-              discard
-            elif consensusFork == ConsensusFork.Gloas:
-              entry.flags.incl(DagEntryFlag.MissingEnvelope)
-            else:
-              raiseAssert "Unsupported fork!"
-        else:
+        let entry = overseer.sdag.getRootEntry(record.bid.root).valueOr:
           overseer.missingSidecars.incl(record.bid.root)
           withConsensusFork(record.consensusFork):
             when consensusFork < ConsensusFork.Gloas:
@@ -3606,6 +3572,17 @@ proc missingSidecarsMonitoringLoop(
               raiseAssert "Unsupported fork!"
           debug "Missing sidecars block root inserted into queue",
             bid = shortLog(record.bid)
+          continue
+
+        entry.flags.incl(DagEntryFlag.MissingSidecars)
+        withConsensusFork(record.consensusFork):
+          when consensusFork < ConsensusFork.Gloas:
+            discard
+          elif consensusFork == ConsensusFork.Gloas:
+            entry.flags.incl(DagEntryFlag.MissingEnvelope)
+          else:
+            raiseAssert "Unsupported fork!"
+
       overseer.blockQuarantine[].sidecarlessEvent.clear()
   except CancelledError:
     discard
@@ -4094,7 +4071,8 @@ proc debugRootSyncJsonDump*(overseer: SyncOverseerRef2): string =
     localHead = overseer.consensusManager.dag.head.bid
     head = overseer.lastSeenHead.valueOr:
       return "{\"roots\":{}}"
-    entry = overseer.sdag.roots.getOrDefault(head.root)
+    entry = overseer.sdag.getRootEntry(head.root).valueOr:
+      return "{\"roots\":{}}"
 
   func currentHead(entry: SyncDagEntryRef): bool =
     (entry.blockId.slot == localHead.slot) and
@@ -4177,10 +4155,6 @@ proc debugRootSyncJsonDump*(overseer: SyncOverseerRef2): string =
     "}"
 
   var items: seq[string]
-
-  if isNil(entry):
-    return "{\"roots\":{}}"
-
   items.add(getItem(entry))
   for centry in entry.parents():
     if isNil(centry):
