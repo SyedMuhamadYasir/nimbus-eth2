@@ -1300,44 +1300,67 @@ proc getForkedBlock(
 
   Opt.some(blck.asSigned())
 
+func getMissingBlocksRequest(
+    overseer: SyncOverseerRef2,
+    peerEntry: PeerEntryRef
+): seq[Eth2Digest] =
+  var
+    duplicates: HashSet[Eth2Digest]
+    res: seq[Eth2Digest]
+  for item in overseer.missingRoots:
+    if len(res) >= peerEntry.maxBlocksPerRequest:
+      break
+    if item notin duplicates:
+      duplicates.incl(item)
+      res.add(item)
+  while len(res) < peerEntry.maxBlocksPerRequest:
+    if len(peerEntry.pendingRoots) == 0:
+      return res
+    let blockRoot = peerEntry.pendingRoots.pop()
+    if blockRoot notin duplicates:
+      duplicates.incl(blockRoot)
+      res.add(blockRoot)
+  res
+
 proc getMissingColumnsBlocksAndRequest(
     overseer: SyncOverseerRef2,
     peer: Peer,
     peerEntry: PeerEntryRef,
     bids: openArray[BlockId]
 ): BlocksAndColumnRequest =
-  var bres: BlocksAndColumnRequest
+  var
+    bres: BlocksAndColumnRequest
+    duplicates: HashSet[Eth2Digest]
+
   let peerMap = peer.getColumnMapOrDefault()
-  bres.columnBlocks =
-    block:
-      var
-        res: seq[ForkedSignedBeaconBlock]
-        duplicates: HashSet[Eth2Digest]
-      # Global missing sidecars
-      for root in overseer.missingSidecars:
-        let
-          signedBlock = overseer.getForkedBlock(root).valueOr:
-            debug "Block without sidecars disappeared",
-              block_root = shortLog(root)
-            overseer.missingRoots.incl(root)
-            continue
-          root = signedBlock.root()
-        if root notin duplicates:
-          duplicates.incl(root)
-          res.add(signedBlock)
-      # Peer's missing sidecars
-      for bid in bids:
-        let
-          signedBlock = overseer.getForkedBlock(bid).valueOr:
-            debug "Block without sidecars disappeared",
-              bid = shortLog(bid)
-            overseer.missingRoots.incl(bid.root)
-            continue
-          root = signedBlock.root()
-        if root notin duplicates:
-          duplicates.incl(root)
-          res.add(signedBlock)
-      res
+
+  # Global missing sidecars
+  for root in overseer.missingSidecars:
+    let
+      signedBlock = overseer.getForkedBlock(root).valueOr:
+        debug "Block without sidecars disappeared",
+          block_root = shortLog(root)
+        overseer.missingRoots.incl(root)
+        continue
+      root = signedBlock.root()
+
+    if root notin duplicates:
+      duplicates.incl(root)
+      bres.columnBlocks.add(signedBlock)
+
+  # Peer's missing sidecars
+  for bid in bids:
+    let
+      signedBlock = overseer.getForkedBlock(bid).valueOr:
+        debug "Block without sidecars disappeared",
+          bid = shortLog(bid)
+        overseer.missingRoots.incl(bid.root)
+        continue
+      root = signedBlock.root()
+
+    if root notin duplicates:
+      duplicates.incl(root)
+      bres.columnBlocks.add(signedBlock)
 
   if len(bres.columnBlocks) > 0:
     # This function is only used for byRoot calls, so we assume that all the
@@ -1348,7 +1371,7 @@ proc getMissingColumnsBlocksAndRequest(
     withBlck(signedBlock):
       when consensusFork == ConsensusFork.Fulu:
         let
-          blockRoot = signedBlock.root
+          blockRoot = forkyBlck.root
           request =
             if len(forkyBlck.message.body.blob_kzg_commitments) == 0:
               DataColumnsByRootIdentifier()
@@ -1362,7 +1385,7 @@ proc getMissingColumnsBlocksAndRequest(
             break
       elif consensusFork == ConsensusFork.Gloas:
         let
-          blockRoot = signedBlock.root
+          blockRoot = forkyBlck.root
           request =
             if len(forkyBlck.message.body.signed_execution_payload_bid.
                   message.blob_kzg_commitments) == 0:
@@ -1387,39 +1410,46 @@ proc getMissingEnvelopeBlocksAndRequest(
     peerEntry: PeerEntryRef,
     bids: openArray[BlockId]
 ): BlocksAndEnvelopeRequest =
-  var bres: BlocksAndEnvelopeRequest
-  bres.blocks =
-    block:
-      var
-        res: seq[ForkedSignedBeaconBlock]
-        duplicates: HashSet[Eth2Digest]
-      # Global missing envelopes
-      for root in overseer.missingEnvelopes:
-        let
-          signedBlock = overseer.getForkedBlock(root).valueOr:
-            debug "Block without envelopes disappeared",
-              block_root = shortLog(root)
-            overseer.missingRoots.incl(root)
-            continue
-          root = signedBlock.root()
-        if root notin duplicates:
-          duplicates.incl(root)
-          res.add(signedBlock)
-      # Peer's missing sidecars
-      for bid in bids:
-        let
-          signedBlock = overseer.getForkedBlock(bid).valueOr:
-            debug "Block without envelopes disappeared",
-              bid = shortLog(bid)
-            overseer.missingRoots.incl(bid.root)
-            continue
-          root = signedBlock.root()
-        if root notin duplicates:
-          duplicates.incl(root)
-          res.add(signedBlock)
-      res
-  for signedBlock in bres.blocks:
-    bres.roots.add(signedBlock.root)
+  var
+    bres: BlocksAndEnvelopeRequest
+    duplicates: HashSet[Eth2Digest]
+
+  # Global missing envelopes
+  for root in overseer.missingEnvelopes:
+    if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
+      break
+
+    let
+      signedBlock = overseer.getForkedBlock(root).valueOr:
+        debug "Block without envelopes disappeared",
+          block_root = shortLog(root)
+        overseer.missingRoots.incl(root)
+        continue
+      root = signedBlock.root()
+
+    if root notin duplicates:
+      duplicates.incl(root)
+      bres.blocks.add(signedBlock)
+      bres.roots.add(root)
+
+  # Peer's missing sidecars
+  for bid in bids:
+    if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
+      break
+
+    let
+      signedBlock = overseer.getForkedBlock(bid).valueOr:
+        debug "Block without envelopes disappeared",
+          bid = shortLog(bid)
+        overseer.missingRoots.incl(bid.root)
+        continue
+      root = signedBlock.root()
+
+    if root notin duplicates:
+      duplicates.incl(root)
+      bres.blocks.add(signedBlock)
+      bres.roots.add(root)
+
   bres
 
 proc doPeerPause(
@@ -1611,34 +1641,7 @@ proc doRootSyncStep(
   let
     peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
       return false
-  var
-    roots =
-      block:
-        # Creating list of roots without duplicates.
-        var
-          dupcheck: HashSet[Eth2Digest]
-          res: seq[Eth2Digest]
-          counter = 0
-        # Add global missing roots.
-        for item in overseer.missingRoots:
-          if counter < peerEntry.maxBlocksPerRequest:
-            if item notin dupcheck:
-              dupcheck.incl(item)
-              res.add(item)
-              inc(counter)
-          else:
-            break
-        # Add peer missing roots
-        while counter < peerEntry.maxBlocksPerRequest:
-          if len(peerEntry.pendingRoots) > 0:
-            let blockRoot = peerEntry.pendingRoots.pop()
-            if blockRoot notin dupcheck:
-              dupcheck.incl(blockRoot)
-              res.add(blockRoot)
-              inc(counter)
-          else:
-            break
-        res
+    roots = overseer.getMissingBlocksRequest(peerEntry)
 
   template restoreRoots() =
     # We should return all the roots back to the pending queue.
@@ -1646,10 +1649,6 @@ proc doRootSyncStep(
       peerEntry.pendingRoots.add(roots[index])
 
   template removeRoot(root: Eth2Digest) =
-    let index = roots.find(root)
-    if index >= 0:
-      # We perform O(n) delete to keep order of roots.
-      roots.delete(index)
     overseer.missingRoots.excl(root)
 
   logScope:
