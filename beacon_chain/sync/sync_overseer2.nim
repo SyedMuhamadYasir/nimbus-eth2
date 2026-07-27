@@ -528,7 +528,7 @@ proc createQueues(
             if res.isOk():
               debug "Block buffered",
                 fork = consensusFork,
-                block_root = forkyBlck.root,
+                bid = shortLog(forkyBlck.toBlockId()),
                 blck = shortLog(forkyBlck),
                 verifier = "block"
             res.mapErr(toSyncVerifierError)
@@ -561,7 +561,7 @@ proc createQueues(
                   shortLog(item.signedEnvelope[].message.beacon_block_root)
               debug "Block and payload buffered",
                 fork = consensusFork,
-                block_root = forkyBlck.root,
+                bid = shortLog(forkyBlck.toBlockId()),
                 blck = shortLog(forkyBlck),
                 payload = payloadLog,
                 verifier = "block"
@@ -625,7 +625,7 @@ proc createQueues(
                   debug "Block verification failed because sidecars " &
                     "are missing",
                     fork = consensusFork,
-                    block_root = item.root,
+                    bid = shortLog(forkyBlck.toBlockId()),
                     blck = shortLog(forkyBlck),
                     missing_sidecars =
                       overseer.getMissingIndicesLog(item.signedBlock),
@@ -673,7 +673,8 @@ proc createQueues(
                       # Missing envelope
                       debug "Block verification failed because the envelope " &
                         "is missing",
-                        fork = consensusFork, block_root = shortLog(item.root),
+                        fork = consensusFork,
+                        bid = shortLog(forkyBlck.toBlockId()),
                         blck = shortLog(forkyBlck),
                         missing_sidecars =
                           overseer.getMissingIndicesLog(item.signedBlock),
@@ -683,7 +684,8 @@ proc createQueues(
                     # Missing sidecars
                     debug "Block verification failed because sidecars " &
                       "are missing",
-                      fork = consensusFork, block_root = item.root,
+                      fork = consensusFork,
+                      bid = shortLog(forkyBlck.toBlockId()),
                       blck = shortLog(forkyBlck),
                       missing_sidecars =
                         overseer.getMissingIndicesLog(item.signedBlock),
@@ -1154,8 +1156,13 @@ proc verifyBlock(
   # Gloas fork processes blocks without sidecars.
   let res = await overseer.blockProcessor.addBlock(
     MsgSource.sync, gloasBlock, noSidecars, maybeFinalized = maybeFinalized)
-  if res.isOk() or (res.isErr() and res.error == VerifierError.Duplicate):
+  if res.isOk() or (res.isErr() and (res.error == VerifierError.Duplicate)):
     overseer.rblockBuffer.add(ForkedSignedBeaconBlock.init(gloasBlock))
+    debug "Block buffered",
+      bid = shortLog(gloasBlock.toBlockId()),
+      blck = shortLog(gloasBlock),
+      verifier = "block"
+
   res.mapErr(toSyncVerifierError)
 
 proc verifyBlock(
@@ -1332,7 +1339,9 @@ proc getMissingColumnsBlocksAndRequest(
     bres: BlocksAndColumnRequest
     duplicates: HashSet[Eth2Digest]
 
-  let peerMap = peer.getColumnMapOrDefault()
+  let
+    dag = overseer.consensusManager.dag
+    peerMap = peer.getColumnMapOrDefault()
 
   # Global missing sidecars
   for root in overseer.missingSidecars:
@@ -1342,10 +1351,10 @@ proc getMissingColumnsBlocksAndRequest(
           block_root = shortLog(root)
         overseer.missingRoots.incl(root)
         continue
-      root = signedBlock.root()
+      bid = signedBlock.toBlockId()
 
-    if root notin duplicates:
-      duplicates.incl(root)
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
       bres.columnBlocks.add(signedBlock)
 
   # Peer's missing sidecars
@@ -1356,10 +1365,10 @@ proc getMissingColumnsBlocksAndRequest(
           bid = shortLog(bid)
         overseer.missingRoots.incl(bid.root)
         continue
-      root = signedBlock.root()
+      bid = signedBlock.toBlockId()
 
-    if root notin duplicates:
-      duplicates.incl(root)
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
       bres.columnBlocks.add(signedBlock)
 
   if len(bres.columnBlocks) > 0:
@@ -1414,6 +1423,8 @@ proc getMissingEnvelopeBlocksAndRequest(
     bres: BlocksAndEnvelopeRequest
     duplicates: HashSet[Eth2Digest]
 
+  let dag = overseer.consensusManager.dag
+
   # Global missing envelopes
   for root in overseer.missingEnvelopes:
     if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
@@ -1425,12 +1436,12 @@ proc getMissingEnvelopeBlocksAndRequest(
           block_root = shortLog(root)
         overseer.missingRoots.incl(root)
         continue
-      root = signedBlock.root()
+      bid = signedBlock.toBlockId()
 
-    if root notin duplicates:
-      duplicates.incl(root)
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
       bres.blocks.add(signedBlock)
-      bres.roots.add(root)
+      bres.roots.add(bid.root)
 
   # Peer's missing sidecars
   for bid in bids:
@@ -1443,12 +1454,11 @@ proc getMissingEnvelopeBlocksAndRequest(
           bid = shortLog(bid)
         overseer.missingRoots.incl(bid.root)
         continue
-      root = signedBlock.root()
 
-    if root notin duplicates:
-      duplicates.incl(root)
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
       bres.blocks.add(signedBlock)
-      bres.roots.add(root)
+      bres.roots.add(bid.root)
 
   bres
 
@@ -3435,8 +3445,7 @@ proc blockMonitoringLoop(
 
       if isNil(entry):
         debug "Got block event, which is not known",
-          block_root = shortLog(blockRoot), block_slot = slot,
-          parent_root = shortLog(parentRoot)
+          bid = shortLog(blck.bid), parent_root = shortLog(parentRoot)
 
         discard
           overseer.sdag.roots.mgetOrPut(
@@ -3524,16 +3533,20 @@ proc missingBlocksMonitoringLoop(
 
   try:
     while true:
-        await overseer.blockQuarantine[].missingEvent.wait()
-        let missingRoots = overseer.blockQuarantine[].checkMissing(high(int))
-        for record in missingRoots:
-          let entry = overseer.sdag.getRootEntry(record.root).valueOr:
-            overseer.missingRoots.incl(record.root)
-            debug "Missing block root inserted into queue",
-              block_root = record.root
-            continue
-          entry.flags.incl(DagEntryFlag.Pending)
-        overseer.blockQuarantine[].missingEvent.clear()
+      var roots: seq[Eth2Digest]
+      await overseer.blockQuarantine[].missingEvent.wait()
+      overseer.missingRoots.clear()
+      let missingRoots = overseer.blockQuarantine[].checkMissing(high(int))
+      for record in missingRoots:
+        let entry = overseer.sdag.getRootEntry(record.root).valueOr:
+          roots.add(record.root)
+          overseer.missingRoots.incl(record.root)
+          continue
+        entry.flags.incl(DagEntryFlag.Pending)
+      if len(roots) > 0:
+        debug "Missing block roots inserted into queue",
+          block_roots = shortLog(roots), block_roots_length = len(roots)
+      overseer.blockQuarantine[].missingEvent.clear()
   except CancelledError:
     discard
 
@@ -3548,40 +3561,20 @@ proc missingSidecarsMonitoringLoop(
   try:
     let dag = overseer.consensusManager.dag
     while true:
+      var roots: seq[Eth2Digest]
       await overseer.blockQuarantine[].sidecarlessEvent.wait()
-      let missingSidecars =
-        block:
-          var res: seq[tuple[consensusFork: ConsensusFork, bid: BlockId]]
-          for signedBlock in overseer.blockQuarantine[].peekSidecarless():
-            let bid = signedBlock.toBlockId()
-            if bid.slot >= dag.head.slot:
-              let consensusFork =
-                dag.cfg.consensusForkAtEpoch(bid.slot.epoch())
-              res.add((consensusFork, bid))
-          res
-      for record in missingSidecars:
-        let entry = overseer.sdag.getRootEntry(record.bid.root).valueOr:
-          overseer.missingSidecars.incl(record.bid.root)
-          withConsensusFork(record.consensusFork):
-            when consensusFork < ConsensusFork.Gloas:
-              discard
-            elif consensusFork == ConsensusFork.Gloas:
-              overseer.missingEnvelopes.incl(record.bid.root)
-            else:
-              raiseAssert "Unsupported fork!"
-          debug "Missing sidecars block root inserted into queue",
-            bid = shortLog(record.bid)
-          continue
-
-        entry.flags.incl(DagEntryFlag.MissingSidecars)
-        withConsensusFork(record.consensusFork):
-          when consensusFork < ConsensusFork.Gloas:
-            discard
-          elif consensusFork == ConsensusFork.Gloas:
-            entry.flags.incl(DagEntryFlag.MissingEnvelope)
-          else:
-            raiseAssert "Unsupported fork!"
-
+      overseer.missingSidecars.clear()
+      for signedBlock in overseer.blockQuarantine[].peekSidecarless():
+        let bid = signedBlock.toBlockId()
+        if bid.slot >= dag.head.slot:
+          let entry = overseer.sdag.getRootEntry(bid.root).valueOr:
+            roots.add(bid.root)
+            overseer.missingSidecars.incl(bid.root)
+            continue
+          entry.flags.incl(DagEntryFlag.MissingSidecars)
+      if len(roots) > 0:
+        debug "Missing sidecar block roots inserted into queue",
+          block_roots = shortLog(roots), block_roots_length = len(roots)
       overseer.blockQuarantine[].sidecarlessEvent.clear()
   except CancelledError:
     discard
@@ -3596,11 +3589,17 @@ proc missingEnvelopesMonitoringLoop(
 
   try:
     while true:
-      await overseer.gloasEnvelopeQuarantine[].missingEvent.wait()
       var roots: seq[Eth2Digest]
-      for record in overseer.gloasEnvelopeQuarantine[].checkMissing(high(int)):
-        if overseer.missingEnvelopes.containsOrIncl(record.root):
+      await overseer.gloasEnvelopeQuarantine[].missingEvent.wait()
+      overseer.missingEnvelopes.clear()
+      let missingRoots =
+        overseer.gloasEnvelopeQuarantine[].checkMissing(high(int))
+      for record in missingRoots:
+        let entry = overseer.sdag.getRootEntry(record.root).valueOr:
           roots.add(record.root)
+          overseer.missingEnvelopes.incl(record.root)
+          continue
+        entry.flags.incl(DagEntryFlag.MissingEnvelope)
       if len(roots) > 0:
         debug "Missing envelope block roots inserted into queue",
           block_roots = shortLog(roots), block_roots_length = len(roots)
