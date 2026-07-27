@@ -1156,13 +1156,16 @@ proc verifyBlock(
   # Gloas fork processes blocks without sidecars.
   let res = await overseer.blockProcessor.addBlock(
     MsgSource.sync, gloasBlock, noSidecars, maybeFinalized = maybeFinalized)
-  if res.isOk() or (res.isErr() and (res.error == VerifierError.Duplicate)):
+  if res.isOk() or
+     (res.error == VerifierError.Duplicate) or
+     (res.error == VerifierError.MissingParent):
     overseer.rblockBuffer.add(ForkedSignedBeaconBlock.init(gloasBlock))
+    let reason = if res.isOk(): "ok" else: $res.error
     debug "Block buffered",
       bid = shortLog(gloasBlock.toBlockId()),
       blck = shortLog(gloasBlock),
+      reason = reason,
       verifier = "block"
-
   res.mapErr(toSyncVerifierError)
 
 proc verifyBlock(
@@ -1649,6 +1652,7 @@ proc doRootSyncStep(
     peer: Peer,
 ): Future[bool] {.async: (raises: [CancelledError]).} =
   let
+    dag = overseer.consensusManager.dag
     peerEntry = overseer.sdag.getPeerEntry(peer.getKey()).valueOr:
       return false
     roots = overseer.getMissingBlocksRequest(peerEntry)
@@ -1663,6 +1667,7 @@ proc doRootSyncStep(
 
   logScope:
     peer = peer
+    head = shortLog(dag.head)
     block_roots = shortLog(roots)
     roots_count = len(roots)
     max_blocks_per_request = peerEntry.maxBlocksPerRequest
@@ -1700,7 +1705,7 @@ proc doRootSyncStep(
     return false
 
   debug "Blocks by root passed response validation",
-        blocks = slimLog(blocks.asSeq()), blocks_count = len(blocks)
+    blocks = slimLog(blocks.asSeq()), blocks_count = len(blocks)
 
   if len(roots) > len(blocks):
     # Number of requested roots is bigger than number of received blocks.
@@ -1711,6 +1716,10 @@ proc doRootSyncStep(
 
   for signedBlock in blocks.asSeq():
     # maybeFinalized = false because we are working in range `>finalizedEpoch`.
+    let bid = signedBlock[].toBlockId()
+    if bid.slot < dag.head.slot:
+      continue
+
     let
       res =
         try:
@@ -1718,8 +1727,6 @@ proc doRootSyncStep(
         except CancelledError as exc:
           restoreRoots()
           raise exc
-      bid =
-        BlockId(slot: signedBlock[].slot(), root: signedBlock[].root())
 
     logScope:
       fork = signedBlock[].kind
@@ -1932,9 +1939,12 @@ proc doRootSidecarsSyncStep(
   let
     dag = overseer.consensusManager.dag
     peerEntry = overseer.sdag.getPeerEntry(peer.getKey).valueOr:
+      debug "Peer entry has not been found", peer = shortLog(peer)
       return false
     peerHead = peer.getHeadBlockId()
     headEntry = overseer.sdag.getRootEntry(peerHead.root).valueOr:
+      debug "Peer head block has not been found",
+        peer_head = shortLog(peerHead), head = shortLog(dag.head)
       return false
     bids = headEntry.getMissingSidecarsRoots()
     peerMap = peer.getColumnMapOrDefault()
@@ -2051,10 +2061,14 @@ proc doRootEnvelopeSyncStep(
     peer: Peer
 ): Future[bool] {.async: (raises: [CancelledError]).} =
   let
+    dag = overseer.consensusManager.dag
     peerEntry = overseer.sdag.getPeerEntry(peer.getKey).valueOr:
+      debug "Peer entry has not been found", peer = shortLog(peer)
       return false
     peerHead = peer.getHeadBlockId()
     headEntry = overseer.sdag.getRootEntry(peerHead.root).valueOr:
+      debug "Peer head block has not been found",
+        peer_head = shortLog(peerHead), head = shortLog(dag.head)
       return false
     bids = headEntry.getMissingEnvelopeRoots()
 
@@ -3312,6 +3326,9 @@ proc timeMonitoringLoop(
         backfill_blocks_queue = shortLog(overseer.bqueue),
         backfill_sidecars_queue = shortLog(overseer.bsqueue),
         sidecarless_quarantine = len(overseer.blockQuarantine.sidecarless),
+        blocks_quarantine = len(overseer.blockQuarantine.missing),
+        envelopeless_quarantine =
+          len(overseer.gloasEnvelopeQuarantine[].missing),
         fulu_column_quarantine = shortLog(overseer.fuluColumnQuarantine[]),
         gloas_column_quarantine = shortLog(overseer.gloasColumnQuarantine[]),
         useful_peers = dist.usefulPeers,
