@@ -2168,48 +2168,80 @@ proc doRootEnvelopeSyncStep(
         discard
       elif consensusFork == ConsensusFork.Gloas:
         let res = await overseer.verifyBlock(forkyBlck, maybeFinalized = false)
-        if res.isErr():
-          if res.error != SyncVerifierError.Duplicate:
-            debug "Envelope's block processor response",
-              reason = res.error, blck = slimLog(record.signedBlock)
+        if res.isOk() or (res.error == SyncVerifierError.Duplicate):
+          debug "Envelope block verification response",
+            reason = "ok", bid = shortLog(forkyBlck.toBlockId())
+          let entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
+            if not(isNil(record.signedEnvelope)):
+              overseer.gloasEnvelopeQuarantine[].addOrphan(
+                dag.finalizedHead.slot, record.signedEnvelope[])
             continue
 
-        let entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
-          continue
+          if record.signedEnvelope.isNil():
+            entry.flags.excl(DagEntryFlag.MissingEnvelope)
+            entry.flags.excl(DagEntryFlag.MissingSidecars)
+            overseer.missingSidecars.excl(forkyBlck.root)
+            overseer.missingEnvelopes.excl(forkyBlck.root)
+            continue
 
-        if record.signedEnvelope.isNil() and
-           (len(forkyBlck.message.body.signed_execution_payload_bid.
-             message.blob_kzg_commitments) == 0):
-          # No envelope and no sidecars
-          peer.updateScore(PeerScoreGoodValues)
-          entry.flags.excl(DagEntryFlag.MissingSidecars)
-          entry.flags.excl(DagEntryFlag.MissingEnvelope)
-          overseer.missingSidecars.excl(forkyBlck.root)
-          overseer.missingEnvelopes.excl(forkyBlck.root)
-          continue
+          let eres = await overseer.verifyEnvelope(
+            forkyBlck, record.signedEnvelope[])
 
-        if record.signedEnvelope.isNil():
-          # There is an envelope in the block, but it is not in the record.
-          peer.updateScore(PeerScoreNoValues)
-          continue
-
-        let eres = await overseer.verifyEnvelope(
-          forkyBlck, record.signedEnvelope[])
-        if eres.isErr():
-          debug "Envelope and sidecars by root processor response",
-            reason = eres.error, bid = record.signedBlock.toBlockId()
-          continue
+          if eres.isOk() or (eres.error == SyncVerifierError.Duplicate):
+            peer.updateScore(PeerScoreGoodValues)
+            debug "Envelope and sidecars by root processor response",
+              reason = "ok", bid = shortLog(forkyBlck.toBlockId())
+            overseer.blockQuarantine[].remove(forkyBlck)
+            entry.flags.excl(DagEntryFlag.MissingSidecars)
+            entry.flags.excl(DagEntryFlag.MissingEnvelope)
+            overseer.missingSidecars.excl(forkyBlck.root)
+            overseer.missingEnvelopes.excl(forkyBlck.root)
+          else:
+            debug "Envelope and sidecars by root processor response",
+              reason = eres.error, bid = shortLog(forkyBlck.toBlockId())
+            case res.error
+            of SyncVerifierError.Invalid, SyncVerifierError.MissingEnvelope:
+              if res.error == SyncVerifierError.Invalid:
+                peer.updateScore(PeerScoreBadValues)
+              else:
+                peer.updateScore(PeerScoreNoValues)
+              entry.flags.incl(DagEntryFlag.MissingEnvelope)
+              overseer.gloasEnvelopeQuarantine[].remove(forkyBlck.root)
+              overseer.missingEnvelopes.incl(forkyBlck.root)
+            of SyncVerifierError.InvalidSidecars, SyncVerifierError.MissingSidecars:
+              if res.error == SyncVerifierError.InvalidSidecars:
+                peer.updateScore(PeerScoreBadValues)
+              overseer.gloasEnvelopeQuarantine[].addOrphan(
+                dag.finalizedHead.slot, record.signedEnvelope[])
+              entry.flags.incl(DagEntryFlag.MissingSidecars)
+              entry.flags.excl(DagEntryFlag.MissingEnvelope)
+              overseer.missingEnvelopes.excl(forkyBlck.root)
+              overseer.missingSidecars.incl(forkyBlck.root)
+            of SyncVerifierError.MissingParent:
+              peer.updateScore(PeerScoreGoodValues)
+              entry.flags.excl(DagEntryFlag.MissingSidecars)
+              entry.flags.excl(DagEntryFlag.MissingEnvelope)
+              overseer.missingEnvelopes.excl(forkyBlck.root)
+              overseer.missingSidecars.excl(forkyBlck.root)
+            of SyncVerifierError.UnviableFork:
+              peer.updateScore(PeerScoreGoodValues)
+              entry.flags.excl(DagEntryFlag.MissingSidecars)
+              entry.flags.excl(DagEntryFlag.MissingEnvelope)
+              entry.flags.incl(DagEntryFlag.Unviable)
+              overseer.missingEnvelopes.excl(forkyBlck.root)
+              overseer.missingSidecars.excl(forkyBlck.root)
+            of SyncVerifierError.Duplicate:
+              raiseAssert("Should be handled earlier")
         else:
-          peer.updateScore(PeerScoreGoodValues)
-          debug "Envelope and sidecars by root processor response",
-            reason = "ok", bid = record.signedBlock.toBlockId()
-          overseer.blockQuarantine[].remove(forkyBlck)
-          entry.flags.excl(DagEntryFlag.MissingSidecars)
-          entry.flags.excl(DagEntryFlag.MissingEnvelope)
-          overseer.missingSidecars.excl(forkyBlck.root)
-          overseer.missingEnvelopes.excl(forkyBlck.root)
+          debug "Envelope block verification response",
+            reason = res.error, bid = shortLog(forkyBlck.toBlockId())
+          if not(isNil(record.signedEnvelope)):
+            peer.updateScore(PeerScoreGoodValues)
+            overseer.gloasEnvelopeQuarantine[].addOrphan(
+              dag.finalizedHead.slot, record.signedEnvelope[])
       else:
         raiseAssert "Unsupported fork!"
+  true
 
 proc doRangeSyncStep(
     overseer: SyncOverseerRef2,
