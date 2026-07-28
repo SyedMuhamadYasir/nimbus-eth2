@@ -235,6 +235,9 @@ func getMissingColumnsLog(
     missingCount = 0.0
     totalCount = 0.0
 
+  if len(items) == 0:
+    return ("100.00%", "[ ... ]")
+
   let blocksColumnsCount = float(len(overseer.validatorCustody.getMap()))
 
   for item in items:
@@ -1310,19 +1313,14 @@ proc getForkedBlock(
 
   Opt.some(blck.asSigned())
 
-func getMissingBlocksRequest(
+proc getMissingBlocksRequest(
     overseer: SyncOverseerRef2,
     peerEntry: PeerEntryRef
 ): seq[Eth2Digest] =
   var
     duplicates: HashSet[Eth2Digest]
     res: seq[Eth2Digest]
-  for item in overseer.missingRoots:
-    if len(res) >= peerEntry.maxBlocksPerRequest:
-      break
-    if item notin duplicates:
-      duplicates.incl(item)
-      res.add(item)
+
   while len(res) < peerEntry.maxBlocksPerRequest:
     if len(peerEntry.pendingRoots) == 0:
       return res
@@ -1330,6 +1328,22 @@ func getMissingBlocksRequest(
     if blockRoot notin duplicates:
       duplicates.incl(blockRoot)
       res.add(blockRoot)
+
+  let delim = len(res)
+
+  for item in overseer.missingRoots:
+    if len(res) >= peerEntry.maxBlocksPerRequest:
+      break
+    if item notin duplicates:
+      duplicates.incl(item)
+      res.add(item)
+
+  debug "Missing block roots request prepared",
+    missing_peer_roots = shortLog(res.toOpenArray(0, delim - 1)),
+    missing_peer_roots_len = delim,
+    missing_global_roots = shortLog(res.toOpenArray(delim, len(res) - 1)),
+    missing_global_roots_len = len(res) - delim
+
   res
 
 proc getMissingColumnsBlocksAndRequest(
@@ -1346,20 +1360,6 @@ proc getMissingColumnsBlocksAndRequest(
     dag = overseer.consensusManager.dag
     peerMap = peer.getColumnMapOrDefault()
 
-  # Global missing sidecars
-  for root in overseer.missingSidecars:
-    let
-      signedBlock = overseer.getForkedBlock(root).valueOr:
-        debug "Block without sidecars disappeared",
-          block_root = shortLog(root)
-        overseer.missingRoots.incl(root)
-        continue
-      bid = signedBlock.toBlockId()
-
-    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
-      duplicates.incl(bid.root)
-      bres.columnBlocks.add(signedBlock)
-
   # Peer's missing sidecars
   for bid in bids:
     let
@@ -1374,10 +1374,33 @@ proc getMissingColumnsBlocksAndRequest(
       duplicates.incl(bid.root)
       bres.columnBlocks.add(signedBlock)
 
+  let delim = len(bres.columnBlocks)
+
+  # Global missing sidecars
+  for root in overseer.missingSidecars:
+    let
+      signedBlock = overseer.getForkedBlock(root).valueOr:
+        debug "Block without sidecars disappeared",
+          block_root = shortLog(root)
+        overseer.missingRoots.incl(root)
+        continue
+      bid = signedBlock.toBlockId()
+
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
+      bres.columnBlocks.add(signedBlock)
+
   if len(bres.columnBlocks) > 0:
     # This function is only used for byRoot calls, so we assume that all the
     # blocks has equal fork.
     bres.consensusFork = bres.columnBlocks[0].kind
+
+  debug "Missing sidecars roots request prepared",
+    missing_peer_roots = slimLog(bres.columnBlocks.toOpenArray(0, delim - 1)),
+    missing_peer_roots_len = delim,
+    missing_global_roots =
+      slimLog(bres.columnBlocks.toOpenArray(delim, len(bres.columnBlocks) - 1)),
+    missing_global_roots_len = len(bres.columnBlocks) - delim
 
   for signedBlock in bres.columnBlocks:
     withBlck(signedBlock):
@@ -1428,6 +1451,25 @@ proc getMissingEnvelopeBlocksAndRequest(
 
   let dag = overseer.consensusManager.dag
 
+  # Peer's missing sidecars
+  for bid in bids:
+    if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
+      break
+
+    let
+      signedBlock = overseer.getForkedBlock(bid).valueOr:
+        debug "Block without envelopes disappeared",
+          bid = shortLog(bid)
+        overseer.missingRoots.incl(bid.root)
+        continue
+
+    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
+      duplicates.incl(bid.root)
+      bres.blocks.add(signedBlock)
+      bres.roots.add(bid.root)
+
+  let delim = len(bres.blocks)
+
   # Global missing envelopes
   for root in overseer.missingEnvelopes:
     if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
@@ -1446,22 +1488,12 @@ proc getMissingEnvelopeBlocksAndRequest(
       bres.blocks.add(signedBlock)
       bres.roots.add(bid.root)
 
-  # Peer's missing sidecars
-  for bid in bids:
-    if len(bres.blocks) >= peerEntry.maxEnvelopesPerRequest:
-      break
-
-    let
-      signedBlock = overseer.getForkedBlock(bid).valueOr:
-        debug "Block without envelopes disappeared",
-          bid = shortLog(bid)
-        overseer.missingRoots.incl(bid.root)
-        continue
-
-    if (bid.slot >= dag.head.slot) and (bid.root notin duplicates):
-      duplicates.incl(bid.root)
-      bres.blocks.add(signedBlock)
-      bres.roots.add(bid.root)
+  debug "Missing envelopes roots request prepared",
+    missing_peer_roots = slimLog(bres.blocks.toOpenArray(0, delim - 1)),
+    missing_peer_roots_len = delim,
+    missing_global_roots =
+      slimLog(bres.blocks.toOpenArray(delim, len(bres.blocks) - 1)),
+    missing_global_roots_len = len(bres.blocks) - delim
 
   bres
 
@@ -1668,8 +1700,6 @@ proc doRootSyncStep(
   logScope:
     peer = peer
     head = shortLog(dag.head)
-    block_roots = shortLog(roots)
-    roots_count = len(roots)
     max_blocks_per_request = peerEntry.maxBlocksPerRequest
     peer_agent = $peer.getRemoteAgent()
     peer_score = peer.getScore()
@@ -1680,7 +1710,9 @@ proc doRootSyncStep(
     debug "No pending roots available for peer"
     return true
 
-  debug "Requesting blocks by root from peer"
+  debug "Requesting blocks by root from peer",
+    block_roots = shortLog(roots),
+    block_roots_count = len(roots)
 
   let
     blocks =
@@ -2475,8 +2507,9 @@ proc checkPeerColumnSidecars(
             break
       (res1, res2)
     else:
-      # This is undefined case, because its impossible to obtain blocks.
-      (false, false)
+      # If there are no matching blocks, we will load all columns,
+      # so we can be sure that the block range is actually empty.
+      (true, true)
 
   let (missingCount, missingLog) = overseer.getMissingColumnsLog(items)
 
@@ -2611,7 +2644,6 @@ proc doFuluRangeSidecarsRequest(
       mitem.sidecar = nil
     grouped.reset()
 
-  # Early detection of empty response.
   validateBlocks(request.data, items, grouped).isOkOr:
     peer.updateScore(PeerScoreMissingValues)
     debug "Received non-complete data column sidecars range",
