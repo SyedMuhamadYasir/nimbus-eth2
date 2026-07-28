@@ -2154,9 +2154,6 @@ proc doRootEnvelopeSyncStep(
   else:
     peerEntry.increaseEnvelopesCount(ConsensusFork.Gloas)
 
-  # Peer provided at least some sidecars, so we award it with reward.
-  peer.updateScore(PeerScoreGoodValues)
-
   let records = groupEnvelopes(request.blocks, envelopes.asSeq())
 
   debug "Preparing envelope verification",
@@ -2167,8 +2164,8 @@ proc doRootEnvelopeSyncStep(
       when consensusFork < ConsensusFork.Gloas:
         discard
       elif consensusFork == ConsensusFork.Gloas:
-        let res = await overseer.verifyBlock(forkyBlck, maybeFinalized = false)
-        if res.isOk() or (res.error == SyncVerifierError.Duplicate):
+        let bres = await overseer.verifyBlock(forkyBlck, maybeFinalized = false)
+        if bres.isOk() or (bres.error == SyncVerifierError.Duplicate):
           debug "Envelope block verification response",
             reason = "ok", bid = shortLog(forkyBlck.toBlockId())
           let entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
@@ -2199,9 +2196,9 @@ proc doRootEnvelopeSyncStep(
           else:
             debug "Envelope and sidecars by root processor response",
               reason = eres.error, bid = shortLog(forkyBlck.toBlockId())
-            case res.error
+            case eres.error
             of SyncVerifierError.Invalid, SyncVerifierError.MissingEnvelope:
-              if res.error == SyncVerifierError.Invalid:
+              if eres.error == SyncVerifierError.Invalid:
                 peer.updateScore(PeerScoreBadValues)
               else:
                 peer.updateScore(PeerScoreNoValues)
@@ -2209,7 +2206,7 @@ proc doRootEnvelopeSyncStep(
               overseer.gloasEnvelopeQuarantine[].remove(forkyBlck.root)
               overseer.missingEnvelopes.incl(forkyBlck.root)
             of SyncVerifierError.InvalidSidecars, SyncVerifierError.MissingSidecars:
-              if res.error == SyncVerifierError.InvalidSidecars:
+              if eres.error == SyncVerifierError.InvalidSidecars:
                 peer.updateScore(PeerScoreBadValues)
               overseer.gloasEnvelopeQuarantine[].addOrphan(
                 dag.finalizedHead.slot, record.signedEnvelope[])
@@ -2234,7 +2231,7 @@ proc doRootEnvelopeSyncStep(
               raiseAssert("Should be handled earlier")
         else:
           debug "Envelope block verification response",
-            reason = res.error, bid = shortLog(forkyBlck.toBlockId())
+            reason = bres.error, bid = shortLog(forkyBlck.toBlockId())
           if not(isNil(record.signedEnvelope)):
             peer.updateScore(PeerScoreGoodValues)
             overseer.gloasEnvelopeQuarantine[].addOrphan(
