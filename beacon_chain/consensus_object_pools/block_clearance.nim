@@ -537,9 +537,10 @@ proc addHeadExecutionPayload*(
   # Check execution parent's envelope
   let epRes = dag.executionParent(
     blck.parent, signedEnvelope.message.payload.parent_hash)
-  if epRes.isSome() and
-      not dag.db.containsExecutionPayloadEnvelope(epRes.get().root):
-    return err(PayloadVerifierError.MissingParent)
+  if epRes.isSome():
+    if epRes.get().slot.epoch() >= dag.cfg.GLOAS_FORK_EPOCH and
+        not dag.db.containsExecutionPayloadEnvelope(epRes.get().root):
+      return err(PayloadVerifierError.MissingParent)
   elif not dag.hasExecutionCheckpoint(
       blck.parent, signedEnvelope.message.payload.parent_hash):
     return err(PayloadVerifierError.MissingParent)
