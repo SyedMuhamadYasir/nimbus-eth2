@@ -469,26 +469,6 @@ type
     version*: string
     data*: PayloadAttributesEventData
 
-template OnBlockAddedCallback*(kind: static ConsensusFork): auto =
-  when kind == ConsensusFork.Gloas:
-    typedesc[OnGloasBlockAdded]
-  elif kind == ConsensusFork.Fulu:
-    typedesc[OnFuluBlockAdded]
-  elif kind == ConsensusFork.Electra:
-    typedesc[OnElectraBlockAdded]
-  elif kind == ConsensusFork.Deneb:
-    typedesc[OnDenebBlockAdded]
-  elif kind == ConsensusFork.Capella:
-    typedesc[OnCapellaBlockAdded]
-  elif kind == ConsensusFork.Bellatrix:
-    typedesc[OnBellatrixBlockAdded]
-  elif kind == ConsensusFork.Altair:
-    typedesc[OnAltairBlockAdded]
-  elif kind == ConsensusFork.Phase0:
-    typedesc[OnPhase0BlockAdded]
-  else:
-    static: raiseAssert "Unreachable"
-
 template timeParams*(dag: ChainDAGRef): TimeParams =
   dag.cfg.timeParams
 
