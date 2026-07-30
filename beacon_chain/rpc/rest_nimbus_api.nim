@@ -20,7 +20,7 @@ import
   ../spec/[forks, beacon_time, peerdas_helpers, column_map],
   ../sync/validator_custody,
   ../beacon_node, ../nimbus_binary_common,
-  ../consensus_object_pools/column_quarantine
+  ../consensus_object_pools/[column_quarantine, envelope_quarantine]
 
 export rest_utils
 
@@ -693,6 +693,8 @@ proc installNimbusApiHandlers*(router: var RestRouter, node: BeaconNode) =
         node.gloasColumnQuarantine[].debugJsonDump()
       of "sync_dag":
         node.syncOverseer.sdag.debugJsonDump(node.dag)
+      of "envelope_quarantine":
+        node.syncOverseer.gloasEnvelopeQuarantine[].debugJsonDump()
       else:
         return RestApiResponse.response("Page not found", Http404, "text/plain")
     RestApiResponse.response(
