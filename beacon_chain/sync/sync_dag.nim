@@ -744,6 +744,29 @@ func decreaseBlocksCount*[A](entry: PeerEntryRef[A]) =
     return
   entry.maxBlocksPerRequest = entry.maxBlocksPerRequest div 2
 
+proc jsonLog*[A](entry: PeerEntryRef[A]): string =
+  let
+    backBlockSlot =
+      if entry.minBackBlockSlot.isSome():
+        $entry.minBackBlockSlot.get()
+      else:
+        "not available"
+    backCarSlot =
+      if entry.minBackCarSlot.isSome():
+        $entry.minBackCarSlot.get()
+      else:
+        "not available"
+    pendingRoots =
+      "[" & entry.pendingRoots.toSeq().mapIt(shortLog(it)).join(",") & "]"
+
+  "{\"peer\":\"" & shortLog(entry.peer) &
+  "\",\"min_backfilll_block_slot\":\"" & backBlockSlot &
+  "\",\"min_backfilll_sidecar_slot\":\"" & backCarSlot &
+  "\",\"max_blocks_per_request\":" & $entry.maxBlocksPerRequest &
+  ",\"max_sidecars_per_request\":" & $entry.maxSidecarsPerRequest &
+  ",\"max_envelopes_per_request\":" & $entry.maxEnvelopesPerRequest &
+  ",\"pending_roots\":" & pendingRoots & "}"
+
 proc debugJsonDump*(sdag: SyncDag, dag: ChainDAGRef): string =
   var
     res: seq[tuple[bid: BlockId, item: string]]
