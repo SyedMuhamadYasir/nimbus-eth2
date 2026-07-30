@@ -606,7 +606,7 @@ proc popSidecarsOrCount*[
       if not(sidecar.isEmpty()):
         doAssert(sidecar.isLoaded(),
           "Record should only have loaded values, but it is `" &
-              $sidecar.kind & "`")
+            $sidecar.kind & "`")
         sidecars.add(sidecar.data)
         if not sidecar.verified:
           unverified.incl(ColumnIndex(sidecar.index))
