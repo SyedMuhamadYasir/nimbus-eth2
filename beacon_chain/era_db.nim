@@ -371,7 +371,7 @@ proc getBlockSSZ*(
 proc getBlock*(
     db: EraDB, historical_roots: openArray[Eth2Digest],
     historical_summaries: openArray[HistoricalSummary], slot: Slot,
-    root: Opt[Eth2Digest], T: type SomeForkySignedBeaconBlock): Opt[T] =
+    root: Opt[Eth2Digest], T: type ForkyTrustedSignedBeaconBlock): Opt[T] =
   var bytes: seq[byte]
   ? db.getBlockSSZ(
     historical_roots, historical_summaries, slot, bytes).mapConvertErr(void)
