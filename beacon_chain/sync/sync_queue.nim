@@ -15,10 +15,10 @@ import
   ../networking/[peer_pool, eth2_network],
   ../gossip_processing/block_processor,
   ../consensus_object_pools/block_pools_types,
-  ./sync_response
+  ./[sync_range, sync_response]
 
 export base, phase0, altair, merge, chronos, chronicles, results,
-       block_pools_types, helpers, sync_response
+       block_pools_types, helpers, sync_response, sync_range
 
 type
   SyncVerifierError* {.pure.} = enum
@@ -38,16 +38,9 @@ type
 
   UniqueId* = distinct uint64
 
-  SyncRange* = object
-    slot*: Slot
-    count*: uint64
-
   SyncPosition* = object
     qindex*: int
     sindex*: int
-
-  SyncQueueKind* {.pure.} = enum
-    Forward, Backward
 
   SyncRequestFlag* {.pure.} = enum
     Void
@@ -150,13 +143,6 @@ type
     uniqId: uint64
     skipId: uint64
     ident: string
-
-proc `$`*(srange: SyncRange): string =
-  if (srange.slot == FAR_FUTURE_SLOT) and (srange.count == 0):
-    "[empty]"
-  else:
-    "[" & Base10.toString(uint64(srange.slot)) & ":" &
-      Base10.toString(uint64(srange.slot + srange.count - 1)) & "]"
 
 template shortLog*[T](req: SyncRequest[T]): string =
   if (req.data.slot == FAR_FUTURE_SLOT) and (req.data.count == 0):
@@ -469,19 +455,6 @@ proc fillCompleteness[M](
   if missingMap.isSome():
     criteria.missingMap = missingMap.get()
 
-func init*(t: typedesc[SyncRange], start_slot, last_slot: Slot): SyncRange =
-  if last_slot < start_slot:
-    SyncRange(slot: last_slot, count: (start_slot - last_slot) + 1)
-  else:
-    SyncRange(slot: start_slot, count: (last_slot - start_slot) + 1)
-
-func init*(t: typedesc[SyncRange], slot: Slot, count: uint64): SyncRange =
-  if uint64(slot) + count < uint64(slot):
-    # `uint64` overflow, so we create range which is limited by FAR_FUTURE_SLOT.
-    SyncRange.init(slot, FAR_FUTURE_SLOT)
-  else:
-    SyncRange(slot: slot, count: count)
-
 func init(t: typedesc[SyncProcessError],
           kind: SyncVerifierError): SyncProcessError =
   case kind
@@ -557,7 +530,7 @@ proc init*[T](
 ): SyncRequest[T] =
   SyncRequest[T](
     kind: kind,
-    data: SyncRange(slot: FAR_FUTURE_SLOT, count: 0'u64),
+    data: SyncRange.init(FAR_FUTURE_SLOT, 0'u64),
     item: item,
     reason: reason,
     state: SyncRequestState.Done,
@@ -615,15 +588,6 @@ func last_slot*(epoch: Epoch): Slot =
   if epoch >= maxEpoch: FAR_FUTURE_SLOT
   else: Slot(epoch * SLOTS_PER_EPOCH + (SLOTS_PER_EPOCH - 1'u64))
 
-template start_slot*(sr: SyncRange): Slot =
-  sr.slot
-
-template last_slot*(sr: SyncRange): Slot =
-  if sr.slot + (uint64(sr.count) - 1'u64) < sr.slot:
-    FAR_FUTURE_SLOT
-  else:
-    sr.slot + (uint64(sr.count) - 1'u64)
-
 proc epochFilter*[M, N](
     squeue: SyncQueue[M, N], srange: SyncRange
 ): SyncRange =
@@ -641,9 +605,8 @@ proc epochFilter*[M, N](
 
     if (currentEpoch.start_slot() <= srange.last_slot()) and
        (squeue.forkAtEpoch(currentEpoch) != startFork):
-      SyncRange(
-        slot: srange.start_slot(),
-        count: currentEpoch.start_slot() - srange.slot)
+      SyncRange.init(
+        srange.start_slot(), currentEpoch.start_slot() - srange.slot)
     else:
       srange
   of SyncQueueKind.Backward:
@@ -660,7 +623,7 @@ proc epochFilter*[M, N](
     if (currentEpoch.last_slot() >= srange.start_slot()) and
        (squeue.forkAtEpoch(currentEpoch) != startFork):
       let ncount = srange.last_slot() - (currentEpoch + 1).start_slot() + 1'u64
-      SyncRange(slot: (currentEpoch + 1).start_slot(), count: ncount)
+      SyncRange.init((currentEpoch + 1).start_slot(), ncount)
     else:
       srange
 
@@ -705,43 +668,6 @@ func prev*[M, N](
       Opt.some(SyncRange.init(sq.finalSlot, currentSlot - sq.finalSlot))
     else:
       Opt.some(SyncRange.init(slot, sq.chunkSize))
-
-func contains*(srange: SyncRange, slot: Slot): bool {.inline.} =
-  ## Returns `true` if `slot` is in range of `srange`.
-  if (srange.slot + srange.count) < srange.slot:
-    (slot >= srange.slot) and (slot <= FAR_FUTURE_SLOT)
-  else:
-    (slot >= srange.slot) and (slot < (srange.slot + srange.count))
-
-func `<=`*(a: SyncRange, b: Slot): bool {.inline.} =
-  ## Returns `true` if all slots in range `a` are equal or smaller than
-  ## slot `b`.
-  (a.start_slot() <= b) and (a.last_slot() <= b)
-
-func `<`*(a: Slot, b: SyncRange): bool {.inline.} =
-  (a < b.start_slot()) and (a < b.last_slot())
-
-func `<`*(a: SyncRange, b: Slot): bool {.inline.} =
-  ## Returns `true` if all slots in range `a` are smaller than slot `b`.
-  (a.start_slot() < b) and (a.last_slot() < b)
-
-func `<`*(a, b: SyncRange): bool {.inline.} =
-  ## Returns `true` if range `a` is below of range `b`.
-  (a.start_slot() < b.start_slot()) and (a.last_slot() < b.start_slot())
-
-func split*(a: SyncRange, b: Slot): tuple[left: SyncRange, right: SyncRange] =
-  doAssert(b in a, "Slot should be inside the range")
-  let
-    left = SyncRange.init(a.start_slot(), b)
-    right =
-      if b + 1 < b:
-        SyncRange.init(b, 0'u64)
-      else:
-        SyncRange.init(b + 1, a.last_slot())
-  (left, right)
-
-func `==`*(a, b: SyncRange): bool {.inline.} =
-  (a.slot == b.slot) and (a.count == b.count)
 
 func `==`*[T](a, b: SyncRequest[T]): bool {.inline.} =
   (a.kind == b.kind) and (a.item == b.item) and (a.data == b.data)
@@ -1201,10 +1127,6 @@ iterator items(
   of SyncQueueKind.Backward:
     for i in countdown(len(items) - 1, 0):
       yield items[i]
-
-iterator items*(srange: SyncRange): Slot =
-  for slot in srange.slot .. (srange.slot + srange.count - 1):
-    yield slot
 
 proc push*[M, N](sq: SyncQueue[M, N], requests: openArray[SyncRequest[M]]) =
   ## Push multiple failed requests back to queue.
