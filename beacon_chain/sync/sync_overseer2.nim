@@ -868,27 +868,18 @@ proc updateQueues(
           old_backward_sidecars_queue = old_backward_sidecars_queue,
           new_backward_sidecars_queue = shortLog(overseer.bsqueue)
 
-proc initPeer(
-    overseer: SyncOverseerRef2,
-    peer: Peer,
-): PeerEntryRef[Peer] =
-  overseer.sdag.peers.mgetOrPut(peer.getKey(), PeerEntryRef.init(peer))
-
 proc updatePeerStatus(overseer: SyncOverseerRef2, peer: Peer) =
   let
     blockId =
       peer.getHeadBlockId()
     checkpoint =
       peer.getFinalizedCheckpoint()
-    hentry =
-      overseer.sdag.roots.mgetOrPut(
-        blockId.root, SyncDagEntryRef.init(blockId))
+    hentry = overseer.sdag.mgetOrPut(blockId)
     fentry =
       if checkpoint.isGenesis():
         nil
       else:
-        overseer.sdag.roots.mgetOrPut(
-          checkpoint.root, SyncDagEntryRef.init(checkpoint))
+        overseer.sdag.mgetOrPut(checkpoint)
     missingHeadRoot =
       if DagEntryFlag.Pending in hentry.flags:
         # Missing parent situation
@@ -3466,8 +3457,7 @@ proc gossipMonitoringLoop(
       debug "Got block from gossip event", bid = shortLog(blockId),
         fork = consensusFork, missing_sidecars = missingSidecars, source = src
 
-      discard overseer.sdag.roots.mgetOrPut(
-        blockId.root, SyncDagEntryRef.init(blockId))
+      discard overseer.sdag.mgetOrPut(blockId)
 
       overseer.updatePeer(
         event.src, false, event.blck, missingSidecars,
@@ -3525,9 +3515,7 @@ proc blockMonitoringLoop(
         debug "Got block event, which is not known",
           bid = shortLog(blck.bid), parent_root = shortLog(parentRoot)
 
-        discard
-          overseer.sdag.roots.mgetOrPut(
-            blockId.root, SyncDagEntryRef.init(blockId))
+        discard overseer.sdag.mgetOrPut(blockId)
 
       overseer.updatePeer(
         overseer.localPeerId, false, slot, blockRoot, parentRoot, false, false,
@@ -3580,9 +3568,7 @@ proc finalMonitoringLoop(
           checkpoint = shortLog(checkpoint), parent_root = shortLog(parentRoot),
           block_slot = slot
 
-        let fentry =
-          overseer.sdag.roots.mgetOrPut(
-            checkpoint.root, SyncDagEntryRef.init(checkpoint))
+        let fentry = overseer.sdag.mgetOrPut(checkpoint)
 
         # In case this entry already exists in DAG we should mark it.
         fentry.flags.incl(DagEntryFlag.Finalized)
@@ -3795,7 +3781,7 @@ proc doLateBlockProcessing(
   let
     dag = overseer.consensusManager.dag
     bid = gloasBlock.toBlockId()
-    entry = overseer.sdag.roots.mgetOrPut(bid.root, SyncDagEntryRef.init(bid))
+    entry = overseer.sdag.mgetOrPut(bid)
     commitmentsLen =
       len(gloasBlock.message.body.signed_execution_payload_bid.message.
         blob_kzg_commitments)
@@ -4041,7 +4027,7 @@ proc mainLoop*(
           lateBlockMonitoringLoopFut, missingBlocksMonitoringLoopFut,
           missingSidecarsMonitoringLoopFut, missingEnvelopesMonitoringLoopFut)
         return
-    var entry = overseer.initPeer(peer)
+    var entry = overseer.sdag.mgetOrPut(peer)
     overseer.updatePeerStatus(peer)
     entry.peerLoopFut = overseer.startPeer(peer)
 

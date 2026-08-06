@@ -18,6 +18,7 @@ const
   DEFAULT_BLOCKS_PER_REQUEST = 32      # MAX_REQUEST_BLOCKS_DENEB div 4
   DEFAULT_SIDECARS_PER_REQUEST = 1024  # MAX_REQUEST_DATA_COLUMN_SIDECARS div 16
   DEFAULT_ENVELOPES_PER_REQUEST = 32   # MAX_REQUEST_PAYLOADS div 4
+  GENESIS_ROOT = Eth2Digest()
 
 type
   DagEntryFlag* {.pure.} = enum
@@ -656,7 +657,13 @@ func cleanMissingSidecarsRoots*(entry: SyncDagEntryRef) =
   if DagEntryFlag.MissingSidecars in entry.flags:
     entry.flags.excl(DagEntryFlag.MissingSidecars)
   for currentEntry in entry.parents():
-    entry.flags.excl(DagEntryFlag.MissingSidecars)
+    currentEntry.flags.excl(DagEntryFlag.MissingSidecars)
+
+func cleanMissingEnvelopeRoots*(entry: SyncDagEntryRef) =
+  if DagEntryFlag.MissingEnvelope in entry.flags:
+    entry.flags.excl(DagEntryFlag.MissingEnvelope)
+  for currentEntry in entry.parents():
+    currentEntry.flags.excl(DagEntryFlag.MissingEnvelope)
 
 func increaseBlocksCount*[A](
     entry: PeerEntryRef[A],
