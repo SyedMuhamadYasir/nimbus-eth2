@@ -203,30 +203,6 @@ AllTests-mainnet
 + an advancing retention floor lifts runBottom                                               OK
 + fresh backfill descends from head to the retention floor                                   OK
 ```
-## BlocksRangeBuffer test suite
-```diff
-+ Add and query blocks test [backward]                                                       OK
-+ Add and query blocks test [forward]                                                        OK
-+ Block insertion test [backward]                                                            OK
-+ Block insertion test [forward]                                                             OK
-+ Buffer advance test [backward]                                                             OK
-+ Buffer advance test [forward]                                                              OK
-+ Buffer invalidate test [backward]                                                          OK
-+ Buffer invalidate test [forward]                                                           OK
-+ Range peek real test cases [forward]                                                       OK
-+ Range peek test [backward]                                                                 OK
-+ Range peek test [forward]                                                                  OK
-```
-## Column reconstruction backfiller cursors
-```diff
-+ a TooFew slot blocks the trail until its columns arrive                                    OK
-+ a head extension reconstructs only the new slot, not the whole run                         OK
-+ a reorg refills only the post-finalized window                                             OK
-+ a reorg retracts the advertised slot, then re-extends it                                   OK
-+ a reorg whose run is entirely post-finalized resets it                                     OK
-+ an advancing retention floor lifts runBottom                                               OK
-+ fresh backfill descends from head to the retention floor                                   OK
-```
 ## ColumnMap test suite
 ```diff
 + and() operation test                                                                       OK
