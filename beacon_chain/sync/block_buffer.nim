@@ -27,19 +27,20 @@ type
   BlocksRootBuffer* = object
     roots: Table[Eth2Digest, ForkedSignedBeaconBlock]
 
-  BlocksRootBuffer* = object
-    roots: Table[Eth2Digest, ForkedSignedBeaconBlock]
-
 func startSlot*(buffer: BlocksRangeBuffer): Slot =
+  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[0].slot
 
 func lastSlot*(buffer: BlocksRangeBuffer): Slot =
+  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[^1].slot
 
 func startItem*(buffer: BlocksRangeBuffer): SyncResponseItem =
+  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[0]
 
 func lastItem*(buffer: BlocksRangeBuffer): SyncResponseItem =
+  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[^1]
 
 func shortLog*(buffer: BlocksRangeBuffer): string =
@@ -441,114 +442,3 @@ func len*(buffer: BlocksRootBuffer): int =
 
 func contains*(buffer: BlocksRootBuffer, root: Eth2Digest): bool =
   contains(buffer.roots, root)
-
-iterator popBlocks*(
-    buffer: var BlocksRootBuffer,
-    root: Eth2Digest
-): ref ForkedSignedBeaconBlock =
-  # Pop blocks from buffer, whose parent is the block identified by `root`
-  var toRemove: seq[Eth2Digest]
-  defer: # Run even if iterator is not carried to termination
-    for k in toRemove:
-      buffer.roots.del k
-
-  for k, v in buffer.roots.mpairs():
-    if v[].parent_root == root:
-      toRemove.add(k)
-      yield v
-
-func len*(buffer: BlocksRangeBuffer): int =
-  len(buffer.blocks)
-
-func almostFull*(buffer: BlocksRangeBuffer): bool =
-  # len(buffer.blocks) >= 2/3 * maxBufferSize
-  len(buffer.items) >= 2 * (buffer.maxBufferSize div 3)
-
-func reset*(buffer: var BlocksRangeBuffer) =
-  buffer.resetBuffer(0)
-
-func init*(
-    t: typedesc[BlocksRangeBuffer],
-    kind: SyncQueueKind,
-): BlocksRangeBuffer =
-  BlocksRangeBuffer(
-    direction: kind,
-  )
-
-func init*(
-    t: typedesc[BlocksRangeBuffer],
-    kind: SyncQueueKind,
-    maxBufferSize: int,
-): BlocksRangeBuffer =
-  doAssert(maxBufferSize > 0, "Buffer size could not be negative or zero")
-  BlocksRangeBuffer(
-    direction: kind,
-    maxBufferSize: maxBufferSize,
-  )
-
-const
-  MissingBlock = ForkedSignedBeaconBlock.init(
-    phase0.SignedBeaconBlock(
-      message: phase0.BeaconBlock(slot: FAR_FUTURE_SLOT)))
-
-func new*(
-    t: typedesc[BlocksRangeBuffer],
-    kind: SyncQueueKind,
-    maxBufferSize: int
-): ref BlocksRangeBuffer =
-  newClone BlocksRangeBuffer.init(kind, maxBufferSize)
-
-proc add*(
-    buffer: var BlocksRootBuffer,
-    blck: ForkedSignedBeaconBlock
-) =
-  buffer.roots[blck.root] = blck
-
-proc add*(
-    buffer: var BlocksRootBuffer,
-    blcks: openArray[ForkedSignedBeaconBlock]
-) =
-  for blck in blcks:
-    buffer.roots[blck.root] = blck
-
-func popRoot*(
-    buffer: var BlocksRootBuffer,
-    root: Eth2Digest
-): Opt[ForkedSignedBeaconBlock] =
-  var res: ForkedSignedBeaconBlock
-  if buffer.roots.pop(root, res):
-    return ok(res)
-  Opt.none(ForkedSignedBeaconBlock)
-
-func remove*(
-    buffer: var BlocksRootBuffer,
-    root: Eth2Digest
-) =
-  buffer.roots.del(root)
-
-func prune*(
-    buffer: var BlocksRootBuffer,
-    epoch: Epoch
-) =
-  var entriesToDelete: seq[Eth2Digest]
-
-  let startSlot = epoch.start_slot()
-  for key, blck in buffer.roots.pairs():
-    let slot = blck.slot()
-    if slot < startSlot:
-      entriesToDelete.add(key)
-
-  for key in entriesToDelete:
-    buffer.roots.del(key)
-
-func getBlock*(
-    buffer: BlocksRootBuffer,
-    root: Eth2Digest
-): Opt[ForkedSignedBeaconBlock] =
-  let blck = buffer.roots.getOrDefault(root, MissingBlock)
-  if blck.slot == FAR_FUTURE_SLOT:
-    return Opt.none(ForkedSignedBeaconBlock)
-  Opt.some(blck)
-
-func len*(buffer: BlocksRootBuffer): int =
-  len(buffer.roots)
