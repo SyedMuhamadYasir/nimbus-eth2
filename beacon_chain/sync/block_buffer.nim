@@ -28,19 +28,15 @@ type
     roots: Table[Eth2Digest, ForkedSignedBeaconBlock]
 
 func startSlot*(buffer: BlocksRangeBuffer): Slot =
-  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[0].slot
 
 func lastSlot*(buffer: BlocksRangeBuffer): Slot =
-  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[^1].slot
 
 func startItem*(buffer: BlocksRangeBuffer): SyncResponseItem =
-  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[0]
 
 func lastItem*(buffer: BlocksRangeBuffer): SyncResponseItem =
-  doAssert(len(buffer.items) > 0, "Buffer must not be empty!")
   buffer.items[^1]
 
 func shortLog*(buffer: BlocksRangeBuffer): string =
@@ -439,6 +435,3 @@ func getBlock*(
 
 func len*(buffer: BlocksRootBuffer): int =
   len(buffer.roots)
-
-func contains*(buffer: BlocksRootBuffer, root: Eth2Digest): bool =
-  contains(buffer.roots, root)
