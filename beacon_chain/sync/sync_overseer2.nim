@@ -1955,6 +1955,63 @@ proc doGloasRootSidecarsRequest(
   peer.updateScore(PeerScoreGoodValues)
   ok()
 
+proc doGloasEnvelopeVerification(
+    overseer: SyncOverseerRef2,
+    peer: Peer,
+    entry: SyncDagEntryRef,
+    signedBlock: gloas.SignedBeaconBlock,
+    signedEnvelope: gloas.SignedExecutionPayloadEnvelope
+): Future[void] {.async: (raises: [CancelledError]).} =
+  let
+    dag = overseer.consensusManager.dag
+    res = await overseer.verifyEnvelope(signedBlock, signedEnvelope)
+
+  if res.isOk() or (res.error == SyncVerifierError.Duplicate):
+    peer.updateScore(PeerScoreGoodValues)
+    debug "Envelope and sidecars by root processor response",
+      reason = "ok", bid = shortLog(signedBlock.toBlockId())
+    overseer.blockQuarantine[].remove(signedBlock)
+    entry.flags.excl(DagEntryFlag.MissingSidecars)
+    entry.flags.excl(DagEntryFlag.MissingEnvelope)
+    overseer.missingSidecars.excl(signedBlock.root)
+    overseer.missingEnvelopes.excl(signedBlock.root)
+  else:
+    debug "Envelope and sidecars by root processor response",
+      reason = res.error, bid = shortLog(signedBlock.toBlockId())
+    case res.error
+    of SyncVerifierError.Invalid, SyncVerifierError.MissingEnvelope:
+      if res.error == SyncVerifierError.Invalid:
+        peer.updateScore(PeerScoreBadValues)
+      else:
+        peer.updateScore(PeerScoreNoValues)
+      entry.flags.incl(DagEntryFlag.MissingEnvelope)
+      overseer.gloasEnvelopeQuarantine[].remove(signedBlock.root)
+      overseer.missingEnvelopes.incl(signedBlock.root)
+    of SyncVerifierError.InvalidSidecars, SyncVerifierError.MissingSidecars:
+      if res.error == SyncVerifierError.InvalidSidecars:
+        peer.updateScore(PeerScoreBadValues)
+      overseer.gloasEnvelopeQuarantine[].addOrphan(
+        dag.finalizedHead.slot, signedEnvelope)
+      entry.flags.incl(DagEntryFlag.MissingSidecars)
+      entry.flags.excl(DagEntryFlag.MissingEnvelope)
+      overseer.missingEnvelopes.excl(signedBlock.root)
+      overseer.missingSidecars.incl(signedBlock.root)
+    of SyncVerifierError.MissingParent:
+      peer.updateScore(PeerScoreGoodValues)
+      entry.flags.excl(DagEntryFlag.MissingSidecars)
+      entry.flags.excl(DagEntryFlag.MissingEnvelope)
+      overseer.missingEnvelopes.excl(signedBlock.root)
+      overseer.missingSidecars.excl(signedBlock.root)
+    of SyncVerifierError.UnviableFork:
+      peer.updateScore(PeerScoreGoodValues)
+      entry.flags.excl(DagEntryFlag.MissingSidecars)
+      entry.flags.excl(DagEntryFlag.MissingEnvelope)
+      entry.flags.incl(DagEntryFlag.Unviable)
+      overseer.missingEnvelopes.excl(signedBlock.root)
+      overseer.missingSidecars.excl(signedBlock.root)
+    of SyncVerifierError.Duplicate:
+      raiseAssert("Should be handled earlier")
+
 proc doRootSidecarsSyncStep(
     overseer: SyncOverseerRef2,
     peer: Peer
@@ -2072,9 +2129,16 @@ proc doRootSidecarsSyncStep(
           entry.flags.excl(DagEntryFlag.MissingSidecars)
           overseer.missingSidecars.excl(forkyBlck.root)
       elif consensusFork == ConsensusFork.Gloas:
-        # For Gloas fork, we do not do any processing, all the processing will
-        # happen later in doRootEnvelopeSyncStep().
-        discard
+        let entry = overseer.sdag.getRootEntry(forkyBlck.root).valueOr:
+          continue
+        if DagEntryFlag.MissingEnvelope notin entry.flags:
+          # For Gloas fork we do processing only in case where sidecars was
+          # downloaded later than envelope.
+          let envelope =
+            overseer.gloasEnvelopeQuarantine[].popOrphan(forkyBlck).valueOr:
+              continue
+          await overseer.doGloasEnvelopeVerification(
+            peer, entry, forkyBlck, envelope)
       else:
         raiseAssert "Should not be happen!"
   true
@@ -2172,54 +2236,8 @@ proc doRootEnvelopeSyncStep(
             overseer.missingEnvelopes.excl(forkyBlck.root)
             continue
 
-          let eres = await overseer.verifyEnvelope(
-            forkyBlck, record.signedEnvelope[])
-
-          if eres.isOk() or (eres.error == SyncVerifierError.Duplicate):
-            peer.updateScore(PeerScoreGoodValues)
-            debug "Envelope and sidecars by root processor response",
-              reason = "ok", bid = shortLog(forkyBlck.toBlockId())
-            overseer.blockQuarantine[].remove(forkyBlck)
-            entry.flags.excl(DagEntryFlag.MissingSidecars)
-            entry.flags.excl(DagEntryFlag.MissingEnvelope)
-            overseer.missingSidecars.excl(forkyBlck.root)
-            overseer.missingEnvelopes.excl(forkyBlck.root)
-          else:
-            debug "Envelope and sidecars by root processor response",
-              reason = eres.error, bid = shortLog(forkyBlck.toBlockId())
-            case eres.error
-            of SyncVerifierError.Invalid, SyncVerifierError.MissingEnvelope:
-              if eres.error == SyncVerifierError.Invalid:
-                peer.updateScore(PeerScoreBadValues)
-              else:
-                peer.updateScore(PeerScoreNoValues)
-              entry.flags.incl(DagEntryFlag.MissingEnvelope)
-              overseer.gloasEnvelopeQuarantine[].remove(forkyBlck.root)
-              overseer.missingEnvelopes.incl(forkyBlck.root)
-            of SyncVerifierError.InvalidSidecars, SyncVerifierError.MissingSidecars:
-              if eres.error == SyncVerifierError.InvalidSidecars:
-                peer.updateScore(PeerScoreBadValues)
-              overseer.gloasEnvelopeQuarantine[].addOrphan(
-                dag.finalizedHead.slot, record.signedEnvelope[])
-              entry.flags.incl(DagEntryFlag.MissingSidecars)
-              entry.flags.excl(DagEntryFlag.MissingEnvelope)
-              overseer.missingEnvelopes.excl(forkyBlck.root)
-              overseer.missingSidecars.incl(forkyBlck.root)
-            of SyncVerifierError.MissingParent:
-              peer.updateScore(PeerScoreGoodValues)
-              entry.flags.excl(DagEntryFlag.MissingSidecars)
-              entry.flags.excl(DagEntryFlag.MissingEnvelope)
-              overseer.missingEnvelopes.excl(forkyBlck.root)
-              overseer.missingSidecars.excl(forkyBlck.root)
-            of SyncVerifierError.UnviableFork:
-              peer.updateScore(PeerScoreGoodValues)
-              entry.flags.excl(DagEntryFlag.MissingSidecars)
-              entry.flags.excl(DagEntryFlag.MissingEnvelope)
-              entry.flags.incl(DagEntryFlag.Unviable)
-              overseer.missingEnvelopes.excl(forkyBlck.root)
-              overseer.missingSidecars.excl(forkyBlck.root)
-            of SyncVerifierError.Duplicate:
-              raiseAssert("Should be handled earlier")
+          await overseer.doGloasEnvelopeVerification(
+            peer, entry, forkyBlck, record.signedEnvelope[])
         else:
           debug "Envelope block verification response",
             reason = bres.error, bid = shortLog(forkyBlck.toBlockId())
