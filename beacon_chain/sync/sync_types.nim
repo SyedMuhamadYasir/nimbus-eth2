@@ -171,5 +171,5 @@ proc new*(
     blocksChunkSize: blocksChunkSize,
     sidecarsChunkSize: sidecarsChunkSize,
     localPeerId: net.peerId(),
-    sdag: SyncDag.init(Peer, PeerId),
+    sdag: SyncDag.init(Peer, PeerId, cm.dag.cfg),
   )
