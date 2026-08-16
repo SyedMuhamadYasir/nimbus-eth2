@@ -12,9 +12,9 @@ import std/[sequtils, strutils],
        ../spec/[helpers, forks, peerdas_helpers, column_map],
        ../spec/datatypes/[deneb, electra, fulu, gloas],
        ../consensus_object_pools/column_quarantine,
-       ./sync_queue
+       ./[sync_range, sync_response]
 
-export results, sync_queue
+export results, sync_range, sync_response
 
 type
   SidecarType = fulu.DataColumnSidecar | gloas.DataColumnSidecar
