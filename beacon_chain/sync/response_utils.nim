@@ -383,6 +383,7 @@ func checkResponse*(
     roots: openArray[Eth2Digest],
     envelopes: openArray[ref SignedExecutionPayloadEnvelope]
 ): Result[void, cstring] =
+  ## This procedure checks peer's getEnvelopesByRoot() response.
   if len(envelopes) == 0:
     return ok()
   if len(envelopes) > len(roots):
