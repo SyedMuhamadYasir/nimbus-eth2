@@ -2783,7 +2783,6 @@ proc doGloasRangeSidecarsRequest(
       mitem.sidecar = nil
     grouped.reset()
 
-  # Early detection of empty response.
   validateBlocks(request.data, items, grouped).isOkOr:
     peer.updateScore(PeerScoreMissingValues)
     debug "Received non-complete data column sidecars range",
