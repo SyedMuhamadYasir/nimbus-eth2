@@ -859,6 +859,26 @@ AllTests-mainnet
 + Verifying Signer / Single remote                                                           OK
 + version 1                                                                                  OK
 ```
+## Response utilities test suite
+```diff
++ checkResponse(SyncRange, ForkedSignedBeaconBlock) test                                     OK
++ checkResponse(SyncRange, SignedExecutionPayloadEnvelope) test                              OK
++ checkResponse(roots, ForkedSignedBeaconBlock) test                                         OK
++ checkResponse(roots, SignedExecutionPayloadEnvelope) test                                  OK
++ combineResponse() test                                                                     OK
++ groupSidecars(DataColumnsByRootIdentifier, fulu.DataColumnSidecar) [node] test             OK
++ groupSidecars(DataColumnsByRootIdentifier, fulu.DataColumnSidecar) [supernode] test        OK
++ groupSidecars(DataColumnsByRootIdentifier, gloas.DataColumnSidecar) [node] test            OK
++ groupSidecars(DataColumnsByRootIdentifier, gloas.DataColumnSidecar) [supernode] test       OK
++ groupSidecars(SyncRange, ColumnMap, fulu.DataColumnSidecar) [node] test                    OK
++ groupSidecars(SyncRange, ColumnMap, fulu.DataColumnSidecar) [supernode] test               OK
++ groupSidecars(SyncRange, ColumnMap, gloas.DataColumnSidecar) [node] test                   OK
++ groupSidecars(SyncRange, ColumnMap, gloas.DataColumnSidecar) [supernode] test              OK
++ validateBlocks(SyncRange, SyncResponseItem, FuluColumnSidecarResponseRecord) [node] test   OK
++ validateBlocks(SyncRange, SyncResponseItem, FuluColumnSidecarResponseRecord) [supernode] t OK
++ validateBlocks(SyncRange, SyncResponseItem, GloasColumnSidecarResponseRecord) [node] test  OK
++ validateBlocks(SyncRange, SyncResponseItem, GloasColumnSidecarResponseRecord) [supernode]  OK
+```
 ## Serialization/deserialization [Beacon Node] [Preset: mainnet]
 ```diff
 + Deserialization test vectors                                                               OK
@@ -1012,9 +1032,7 @@ AllTests-mainnet
 + [SyncQueue#Forward] finish test                                                            OK
 + [SyncQueue#Forward] getRewindPoint() test                                                  OK
 + [SyncQueue#Forward] partial ranges test                                                    OK
-+ [SyncQueue] checkResponse() test                                                           OK
 + [SyncQueue] hasEndGap() test                                                               OK
-+ combineResponse() test                                                                     OK
 ```
 ## SyncRange test suite
 ```diff
