@@ -18,7 +18,7 @@ import
     forks_light_client, presets],
   ./datatypes/[phase0, altair, bellatrix, capella, deneb, electra, fulu, gloas,
                heze],
-  ./mev/[bellatrix_mev, capella_mev, deneb_mev, electra_mev, fulu_mev]
+  ./mev/[bellatrix_mev, capella_mev, deneb_mev, electra_mev, fulu_mev, gloas_mev]
 
 import ./engine_types except
   Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD, BYTES_PER_CELL, CELLS_PER_EXT_BLOB,
@@ -32,10 +32,11 @@ export
   extras, block_id, eth2_merkleization, eth2_ssz_serialization,
   forks_light_client, presets,
   phase0, altair, bellatrix, capella, deneb, electra, fulu, gloas, heze,
-  bellatrix_mev, capella_mev, deneb_mev, electra_mev, fulu_mev
+  bellatrix_mev, capella_mev, deneb_mev, electra_mev, fulu_mev, gloas_mev
 export engine_types except
   Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD, BYTES_PER_CELL, CELLS_PER_EXT_BLOB,
   FIELD_ELEMENTS_PER_CELL, Blob, ExecutionRequests, KzgProof
+
 
 # This file contains helpers for dealing with forks - we have two ways we can
 # deal with forks:

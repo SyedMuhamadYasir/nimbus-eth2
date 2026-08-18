@@ -78,7 +78,10 @@ type
     ForkedMaybeBlindedBeaconBlock |
     deneb_mev.SignedBlindedBeaconBlock |
     electra_mev.SignedBlindedBeaconBlock |
-    fulu_mev.SignedBlindedBeaconBlock
+    fulu_mev.SignedBlindedBeaconBlock |
+    BuilderPreferencesRequestV1 |
+    SignedRequestAuthV1 |
+    gloas.SignedBeaconBlock
 
   EncodeArrays* =
     seq[phase0.Attestation] |
@@ -653,6 +656,40 @@ proc decodeBodyJsonOrSsz*(
         SSZ.decode(
           body.data,
           List[SignedValidatorRegistrationV1, Limit VALIDATOR_REGISTRY_LIMIT])
+      except SerializationError as exc:
+        debug "Failed to deserialize REST SSZ data",
+              err = exc.formatMsg("<data>")
+        return err(
+          RestErrorMessage.init(Http400, UnableDecodeError,
+                                [exc.formatMsg("<data>")]))
+    ok(data.asSeq)
+  else:
+    err(RestErrorMessage.init(Http415, InvalidContentTypeError,
+                              [$body.contentType]))
+
+proc decodeBodyJsonOrSsz*(
+    t: typedesc[seq[PayloadAttestationMessage]],
+    body: ContentBody
+): Result[seq[PayloadAttestationMessage], RestErrorMessage] =
+  if body.contentType == ApplicationJsonMediaType:
+    let data =
+      try:
+        RestJson.decode(
+          body.data,
+          seq[PayloadAttestationMessage])
+      except SerializationError as exc:
+        debug "Failed to deserialize REST JSON data",
+              err = exc.formatMsg("<data>")
+        return err(
+          RestErrorMessage.init(Http400, UnableDecodeError,
+                                [exc.formatMsg("<data>")]))
+    ok(data)
+  elif body.contentType == OctetStreamMediaType:
+    let data =
+      try:
+        SSZ.decode(
+          body.data,
+          List[PayloadAttestationMessage, Limit PTC_SIZE])
       except SerializationError as exc:
         debug "Failed to deserialize REST SSZ data",
               err = exc.formatMsg("<data>")
