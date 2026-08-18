@@ -20,14 +20,14 @@ import
   # Local modules:
   ../spec/[engine_authentication, forks, helpers_el],
   ../networking/network_metadata,
-  "."/[el_conf, engine_api_conversions]
+  ./[el_conf, engine_api_conversions]
 
 import ../spec/engine_types except
   PayloadStatus, BlobAndProofV2, Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD,
   BYTES_PER_CELL, CELLS_PER_EXT_BLOB, FIELD_ELEMENTS_PER_CELL, Blob,
   ExecutionRequests, KzgProof
-import "."/engine_rest_client except connection, PayloadStatus, BlobAndProofV2
-import "."/engine_rest_conversions except connection, PayloadStatus, BlobAndProofV2
+import ./engine_rest_client except connection, PayloadStatus, BlobAndProofV2
+import ./engine_rest_conversions except connection, PayloadStatus, BlobAndProofV2
 
 from std/sequtils import anyIt, filterIt, mapIt
 from std/times import getTime, toUnix
