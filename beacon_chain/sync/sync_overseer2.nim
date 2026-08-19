@@ -2209,7 +2209,7 @@ proc doRootEnvelopeSyncStep(
   else:
     peerEntry.increaseEnvelopesCount(ConsensusFork.Gloas)
 
-  let records = groupEnvelopes(request.blocks, envelopes.asSeq())
+  let records = toResponse(request.blocks, envelopes.asSeq())
 
   debug "Preparing envelope verification",
     records = shortLog(records), records_count = len(records)
